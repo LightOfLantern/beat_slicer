@@ -1,0 +1,6 @@
+.DS_Store
+__pycache__/
+*.pyc
+*.idsig
+android/build/
+android/.debug.keystore

@@ -2,17 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Beat Slicer</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Beat Slicer Mobile</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <style>
-  html,body{margin:0;height:100%;overflow:hidden;background:#07070c;font-family:system-ui,-apple-system,sans-serif;color:#fff;user-select:none;-webkit-user-select:none}
+  html,body{margin:0;width:100%;max-width:100%;height:100%;min-height:100%;overflow:hidden;overscroll-behavior:none;background:#07070c;font-family:system-ui,-apple-system,sans-serif;color:#fff;user-select:none;-webkit-user-select:none}
   #c{position:fixed;inset:0;display:block;cursor:crosshair;touch-action:none}
-  #menu{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;background:radial-gradient(ellipse at center,#101022 0%,#07070c 72%);z-index:10}
+  #menu{position:fixed;inset:0;width:100%;height:100%;max-width:100vw;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;box-sizing:border-box;background:radial-gradient(ellipse at center,#101022 0%,#07070c 72%);z-index:10}
   h1{font-size:56px;margin:0;letter-spacing:6px;background:linear-gradient(90deg,#ff3e9d,#00e5ff);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 20px rgba(255,62,157,.35))}
   .row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
   button{font-size:16px;padding:12px 22px;border-radius:12px;border:1px solid #333;background:#14141f;color:#eee;cursor:pointer;transition:.15s}
   button:hover{border-color:#00e5ff;box-shadow:0 0 14px rgba(0,229,255,.25);transform:translateY(-1px)}
   button.sel{border-color:#ff3e9d;box-shadow:0 0 14px rgba(255,62,157,.45)}
+  button.trackSelected{border-color:#00e5ff;box-shadow:0 0 16px rgba(0,229,255,.42);background:#101c25}
+  button:disabled{opacity:.48;cursor:default;transform:none;box-shadow:none}
   .hint{color:#8b8ba0;font-size:13px;max-width:560px;text-align:center;line-height:1.55;padding:0 16px}
   #res{color:#cfd0e8;font-size:17px}
   #res b{color:#00e5ff}
@@ -37,9 +39,23 @@
   .levelRecord{padding:9px 14px;border:1px solid rgba(0,229,255,.28);border-radius:12px;background:rgba(0,229,255,.045);text-align:center;color:#8b8ba0;font-size:11px;letter-spacing:1.1px;text-transform:uppercase}
   .levelRecord strong{display:inline-block;margin:0 10px;color:#fff;font-size:14px;letter-spacing:.4px}
   .levelRecord .recordStars{color:#ffd75e;font-size:17px;letter-spacing:2px;text-shadow:0 0 10px rgba(255,215,94,.4)}
+  #bStart{width:min(700px,100%);min-height:58px;font-size:21px;font-weight:900;letter-spacing:3px;border-color:#ff3e9d;color:#fff;background:linear-gradient(90deg,rgba(255,62,157,.16),rgba(0,229,255,.13));box-shadow:0 0 20px rgba(255,62,157,.22)}
+  .unsupported{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:28px;background:#07070c;color:#fff;text-align:center;font:700 18px/1.5 system-ui}
+  @media(max-width:700px),(pointer:coarse){
+    #menu{justify-content:flex-start;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;gap:13px;padding:calc(20px + env(safe-area-inset-top)) 12px calc(24px + env(safe-area-inset-bottom))}
+    h1{font-size:clamp(34px,11vw,52px);letter-spacing:3px;margin-top:auto}
+    .row{width:100%;gap:8px}.row button{min-height:48px;padding:11px 14px;font-size:15px}
+    #diffRow button{flex:1}.levelChoice{min-width:0;width:100%;max-width:100%}.levelChoice button,#bStart{width:100%;max-width:100%;box-sizing:border-box;white-space:normal}
+    .hint{font-size:11px;line-height:1.4}.levelRecord{font-size:10px;padding:8px}
+    #hud{top:calc(10px + env(safe-area-inset-top));left:14px}#score{font-size:30px}
+    #stop{top:calc(8px + env(safe-area-inset-top));right:10px;min-height:42px}
+    #resultStars{gap:12px;margin:22px 0 16px}.resultStar{font-size:clamp(64px,22vw,96px)}
+    #resultMeta{padding:0 18px;font-size:13px}#resultContinue{min-height:50px}
+  }
 </style>
 </head>
 <body>
+<noscript><div class="unsupported">Этот предпросмотр не запускает игру. Откройте Beat Slicer по HTTP/HTTPS-ссылке непосредственно в Safari.</div></noscript>
 <canvas id="c"></canvas>
 <div id="hud" hidden><div id="score">0</div></div>
 <button id="stop">■ Stop (Esc)</button>
@@ -63,27 +79,37 @@
   </div>
   <div class="row">
     <button id="bFile">🎵 Track file</button>
-    <button id="bTab">🖥 Tab audio</button>
   </div>
   <div class="row">
     <div class="levelChoice"><button id="bLevel">★ Free Flow Flava — Mistake</button><div id="levelRecordMistake" class="levelRecord"></div></div>
     <div class="levelChoice"><button id="bLevelYala">★ QMIIR — YALA (Slowed)</button><div id="levelRecordYala" class="levelRecord"></div></div>
   </div>
+  <div class="row"><button id="bStart" disabled>SELECT A TRACK</button></div>
   <div class="hint">
     Orbs launch evenly on the BPM grid at a constant speed. Active sections add half-beats. Slice after the ring appears: cutting too early costs 150 points, a missed orb — 100. Stop the mouse and the game waits with no penalties.<br><br>
     <b>Track file</b> — the most accurate sync (beats are analyzed ahead of time).
-    <b>Tab audio</b> — Chrome only: play music in another tab, pick it and tick “Also share tab audio”.
     <br><b>Bundled levels</b> — Mistake and YALA (Slowed), each with a hand-authored chart and three difficulties.
   </div>
 </div>
 <input type="file" id="file" accept="audio/*" hidden>
-<audio id="levelAudio" src="Free_Flow_Flava_-_Mistake_79894259.mp3" preload="auto" hidden></audio>
-<audio id="levelAudioYala" src="QMIIR_-_YALA_Slowed_81306825.mp3" preload="auto" hidden></audio>
+<audio id="levelAudio" src="Free_Flow_Flava_-_Mistake_79894259.mp3" preload="none" playsinline hidden></audio>
+<audio id="levelAudioYala" src="QMIIR_-_YALA_Slowed_81306825.mp3" preload="none" playsinline hidden></audio>
 <script>
 'use strict';
 const cv=document.getElementById('c'),cx=cv.getContext('2d');
 let W=0,H=0;
-function resize(){W=cv.width=innerWidth;H=cv.height=innerHeight;}
+const MOBILE_DPR=Math.min(1.6,window.devicePixelRatio||1),MOBILE_TOUCH=matchMedia('(pointer:coarse)').matches;
+const MOBILE_EQ_BARS=36,MOBILE_PARTICLES=10;
+function resize(){
+  const oldW=W||innerWidth,oldH=H||innerHeight,nw=Math.max(280,innerWidth),nh=Math.max(320,innerHeight);
+  const sx=nw/oldW,sy=nh/oldH;W=nw;H=nh;
+  cv.width=Math.round(W*MOBILE_DPR);cv.height=Math.round(H*MOBILE_DPR);
+  cv.style.width=W+'px';cv.style.height=H+'px';cx.setTransform(MOBILE_DPR,0,0,MOBILE_DPR,0,0);
+  const state=window.G;if(!state||sx===1&&sy===1)return;
+  for(const o of state.orbs){o.x*=sx;o.y*=sy;o.x0*=sx;o.y0*=sy;o.vx*=sx;o.vy*=sy;o.vy0*=sy;o.g*=sy;}
+  for(const a of [state.halves,state.parts,state.texts])for(const p of a){if(Number.isFinite(p.x))p.x*=sx;if(Number.isFinite(p.y))p.y*=sy;}
+  state.trail.length=0;
+}
 addEventListener('resize',resize);resize();
 addEventListener('contextmenu',e=>e.preventDefault());
 
@@ -102,7 +128,7 @@ const G={mode:null,running:false,diff:'norm',
   ultChains:{},ultClears:0,
   levelMaxScore:0,levelDiff:null,levelTrackId:null,levelTitle:null,
   levelSilenceAt:0,levelMinEndSilence:2,levelOff:0,levelActiveRanges:[],levelBuildBars:[],
-  score:0,combo:0,maxCombo:0,sliced:0,missed:0,bombs:0,earlyCuts:0,
+  score:0,combo:0,maxCombo:0,sliced:0,missed:0,bombs:0,earlyCuts:0,deviceDrops:0,
   passive:false,listenUntil:0,lastInput:0,beatStep:0,energy:0,activityLvl:1,lastBombT:0,
   multShown:1,multPop:0,multRed:0,lastBeatT:0,
   liveOffset:Number(localStorage.getItem('bs_tab_offset'))||0,liveErrors:[],liveCalibrated:false,
@@ -549,7 +575,7 @@ function spawnUlt(nt,hitT,travel){
 function spawnOrb(hitT,travel,type,side,aim=null){
   const d=DIFF[G.diff];
   // физика — по фактическому времени до удара (после лага кадра шар всё равно прилетит вовремя)
-  const tr=Math.max(.24,hitT-AC.currentTime);
+  const spawnT=AC.currentTime,tr=Math.max(.42,hitT-spawnT);
   const fr=side===0?[.08,.45]:side===1?[.55,.92]:[.08,.92];
   const x0=aim?W*aim.x0:W*(fr[0]+Math.random()*(fr[1]-fr[0]));
   const xt=aim?W*aim.xt:Math.min(W*.94,Math.max(W*.06,x0+(Math.random()*2-1)*W*.22));
@@ -561,7 +587,7 @@ function spawnOrb(hitT,travel,type,side,aim=null){
   const vx=(xt-x0)/tr;
   const r=(type==='bomb'?26:30+Math.random()*10)*d.rMul;
   const cueAt=AC.currentTime+tr*.42;
-  G.orbs.push({x:x0,y:y0,vx,vy,g:grav,r,type,hitT,travel:tr,cueAt,
+  G.orbs.push({x:x0,y:y0,x0,y0,vx,vy,vy0:vy,g:grav,spawnT,r,type,hitT,travel:tr,cueAt,
     sourceLive:G.mode==='tab',hue:aim?45:PAL[Math.random()*PAL.length|0],ultId:aim?.ultId});
 }
 
@@ -703,7 +729,7 @@ function missOrb(o=null){
   G.missed++;G.combo=0;G.score-=100;updateHud();
 }
 function burst(x,y,hue,r){
-  for(let i=0;i<16;i++){ // сноп искр, как от резки металла: быстрые, тонкие, короткоживущие
+  for(let i=0;i<MOBILE_PARTICLES;i++){ // мобильный бюджет частиц: ритм важнее overdraw
     const a=Math.random()*Math.PI*2,v=160+Math.random()*460;
     G.parts.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v-110,life:.3+Math.random()*.35,max:.65,hue,r:1.2+Math.random()*1.8});
   }
@@ -712,11 +738,15 @@ function burst(x,y,hue,r){
 function addText(x,y,txt,color,size){G.texts.push({x,y,txt,color,size,life:1});}
 
 // ---------- ввод ----------
-let lastP=null;
+let lastP=null,activePointerId=null;
 function currentBeatIv(){return(G.mode==='file'||G.mode==='level')?G.beatIv:(G.rt.interval||.5);}
+function pointerPoint(e){
+  const r=cv.getBoundingClientRect(),rw=r.width||W,rh=r.height||H;
+  return{x:(e.clientX-r.left)*W/rw,y:(e.clientY-r.top)*H/rh,t:performance.now(),sp:0};
+}
 function enterPassive(){
   if(!G.running||G.passive)return;
-  G.passive=true;G.listenUntil=0;G.orbs.length=0;G.pending.length=0;lastP=null;updateHud();
+  G.passive=true;G.listenUntil=0;G.orbs.length=0;G.pending.length=0;lastP=null;activePointerId=null;updateHud();
 }
 function resumeFromPassive(){
   if(!G.running||!G.passive)return;
@@ -725,7 +755,8 @@ function resumeFromPassive(){
   G.lastInput=performance.now()+iv*4000;updateHud();
 }
 cv.addEventListener('pointermove',e=>{
-  const p={x:e.clientX,y:e.clientY,t:performance.now(),sp:0};
+  if(e.pointerId!==activePointerId)return;
+  const p=pointerPoint(e);
   G.lastInput=p.t;if(G.passive)resumeFromPassive();
   G.trail.push(p);
   if(lastP){
@@ -736,10 +767,20 @@ cv.addEventListener('pointermove',e=>{
   lastP=p;
 });
 cv.addEventListener('pointerdown',e=>{
+  if(activePointerId!==null){e.preventDefault();return;}
+  activePointerId=e.pointerId;e.preventDefault();
   G.lastInput=performance.now();if(G.passive)resumeFromPassive();
-  lastP={x:e.clientX,y:e.clientY,t:G.lastInput};
-});
-cv.addEventListener('pointerleave',()=>{lastP=null;});
+  try{cv.setPointerCapture(e.pointerId);}catch(_){}
+  lastP=pointerPoint(e);lastP.t=G.lastInput;
+},{passive:false});
+function releasePointer(e){
+  if(e.pointerId!==activePointerId)return;
+  try{cv.releasePointerCapture(e.pointerId);}catch(_){}
+  activePointerId=null;lastP=null;
+}
+cv.addEventListener('pointerup',releasePointer);
+cv.addEventListener('pointercancel',releasePointer);
+cv.addEventListener('pointerleave',e=>{if(e.pointerId===activePointerId&&!cv.hasPointerCapture?.(e.pointerId))releasePointer(e);});
 addEventListener('keydown',e=>{if(e.key==='Escape'&&G.running)stopGame(true);});
 
 // ---------- игровой цикл ----------
@@ -756,10 +797,9 @@ function update(now,dt){
       if(nt.t-travel>st)break;
       G.beatIdx++;
       const hit=G.songStart+nt.t;
-      if(hit>now+.25&&canSchedule(hit))spawnNote(nt,hit);
-      else if(hit<=now+.25&&nt.orbs>0&&!G.passive&&(!G.listenUntil||now>=G.listenUntil)){
-        for(let k=0;k<(nt.ult||nt.orbs);k++)missOrb();
-      }
+      const minLead=Math.min(.7,Math.max(.45,travel*.55));
+      if(hit>now+minLead&&canSchedule(hit))spawnNote(nt,hit);
+      else if(hit<=now+minLead&&nt.orbs>0)G.deviceDrops+=nt.ult||nt.orbs;
     }
     // свет: пульс на каждом бите сетки (сильнее на дропах)
     while(G.lightIdx<G.lightBeats.length&&G.lightBeats[G.lightIdx].t<=st){
@@ -769,7 +809,10 @@ function update(now,dt){
   }
   for(let i=G.orbs.length-1;i>=0;i--){
     const o=G.orbs[i];
-    o.vy+=o.g*dt;o.x+=o.vx*dt;o.y+=o.vy*dt;
+    // Аналитическая траектория от аудиочасов: FPS и паузы main thread не меняют
+    // ни скорость, ни положение шара в момент бита.
+    const age=Math.max(0,now-o.spawnT);
+    o.x=o.x0+o.vx*age;o.y=o.y0+o.vy0*age+.5*o.g*age*age;o.vy=o.vy0+o.g*age;
     if(o.y>H+90&&o.vy>0){
       G.orbs.splice(i,1);
       if(o.type==='orb'&&!G.passive&&(!G.listenUntil||now>=G.listenUntil))missOrb(o);
@@ -800,9 +843,12 @@ function update(now,dt){
 }
 
 function draw(now){
+  // Полная очистка идёт в физических пикселях backing store. Затем весь игровой
+  // мир рисуется в CSS-пикселях под единым DPR-transform — без швов и ghost frames.
   cx.setTransform(1,0,0,1,0,0);
-  if(G.shake>.5)cx.setTransform(1,0,0,1,(Math.random()-.5)*G.shake,(Math.random()-.5)*G.shake);
-  cx.fillStyle='#07070c';cx.fillRect(-25,-25,W+50,H+50);
+  cx.fillStyle='#07070c';cx.fillRect(0,0,cv.width,cv.height);
+  const shakeX=G.shake>.5?(Math.random()-.5)*G.shake:0,shakeY=G.shake>.5?(Math.random()-.5)*G.shake:0;
+  cx.setTransform(MOBILE_DPR,0,0,MOBILE_DPR,shakeX*MOBILE_DPR,shakeY*MOBILE_DPR);
   // фон подогревает драйв: гейтится множителем (×1 — погашен, ×2 — мерцает под бит, ×3+ — ярче)
   const mult=multOf(G.combo);
   const mg=G.running?Math.min(1,(mult-1)*.45):1;
@@ -819,7 +865,7 @@ function draw(now){
   if(G.flashRed>0){cx.fillStyle=`rgba(255,30,50,${G.flashRed*.35})`;cx.fillRect(-25,-25,W+50,H+50);}
   if(G.flashWhite>0){cx.fillStyle=`rgba(255,255,255,${G.flashWhite*.9})`;cx.fillRect(-25,-25,W+50,H+50);}
   if(freq){
-    const n=56,bw=W/n;
+    const n=MOBILE_EQ_BARS,bw=W/n;
     if(!G.barsSm)G.barsSm=new Float32Array(n);
     for(let i=0;i<n;i++){
       const v=freq[(Math.pow(i/n,1.6)*freq.length*.6|0)+2]/255;
@@ -1053,7 +1099,7 @@ function loop(ts){
   const now=AC?AC.currentTime:0;
   if(AC)updateAudio(now);
   if(G.running){
-    if(!G.passive&&performance.now()-G.lastInput>2600)enterPassive();
+    if(!MOBILE_TOUCH&&!G.passive&&performance.now()-G.lastInput>2600)enterPassive();
     if(G.listenUntil&&now>=G.listenUntil){G.listenUntil=0;updateHud();}
     update(now,dt);
   }
@@ -1109,7 +1155,7 @@ function renderLevelRecords(){
 function hideLevelResult(){
   cancelAnimationFrame(resultScoreAnim);resultStarTimers.forEach(clearTimeout);resultStarTimers=[];
   resultOverlay.classList.remove('show');
-  setTimeout(()=>{resultOverlay.hidden=true;menu.style.display='flex';renderLevelRecords();},430);
+  setTimeout(()=>{resultOverlay.hidden=true;menu.style.display='flex';renderLevelRecords();refreshStartButton();},430);
 }
 function showLevelResult(){
   const tot=G.sliced+G.missed+G.earlyCuts,accuracy=tot?Math.round(100*G.sliced/tot):0;
@@ -1147,7 +1193,7 @@ function updateHud(){
 }
 function startRun(mode){
   G.mode=mode;G.running=true;
-  G.score=0;G.combo=0;G.maxCombo=0;G.sliced=0;G.missed=0;G.bombs=0;G.earlyCuts=0;
+  G.score=0;G.combo=0;G.maxCombo=0;G.sliced=0;G.missed=0;G.bombs=0;G.earlyCuts=0;G.deviceDrops=0;
   G.ultChains={};G.ultClears=0;
   if(mode!=='level'){
     G.levelMaxScore=0;G.levelDiff=null;G.levelTrackId=null;G.levelTitle=null;
@@ -1179,6 +1225,7 @@ function stopGame(showRes,completed=false){
   if(G.stream){G.stream.getTracks().forEach(t=>t.stop());G.stream=null;}
   G.orbs.length=0;G.halves.length=0;G.parts.length=0;G.texts.length=0;G.pending.length=0;
   menu.style.display=levelComplete?'none':'flex';hud.hidden=true;stopBtn.style.display='none';
+  if(!levelComplete)refreshStartButton();
   if(levelComplete){resEl.hidden=true;showLevelResult();}
   else if(showRes){
     const tot=G.sliced+G.missed+G.earlyCuts;
@@ -1215,27 +1262,6 @@ fileInp.onchange=async e=>{
     addText(W/2,H*.42,`≈${Math.round(60/an.iv)} BPM`,'#00e5ff',30);
   }catch(err){alert('Failed: '+err.message);}
   bFile.textContent='🎵 Track file';bFile.disabled=false;fileInp.value='';
-};
-
-document.getElementById('bTab').onclick=async()=>{
-  ensureAC();
-  try{
-    const st=await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
-    st.getVideoTracks().forEach(t=>t.stop());
-    if(!st.getAudioTracks().length){
-      st.getTracks().forEach(t=>t.stop());
-      alert('No audio shared. Pick a TAB (not a window) and tick “Also share tab audio”.');
-      return;
-    }
-    G.stream=st;
-    G.srcNode=AC.createMediaStreamSource(st);
-    G.srcNode.connect(analyser); // только в анализатор, звук уже играет во вкладке
-    const reportedLatency=Number(st.getAudioTracks()[0].getSettings?.().latency)||0;
-    if(reportedLatency>0)G.liveOffset=-Math.min(.18,reportedLatency);
-    else G.liveOffset=Number(localStorage.getItem('bs_tab_offset'))||0;
-    st.getAudioTracks()[0].onended=()=>{if(G.running)stopGame(true);};
-    startRun('tab');
-  }catch(err){if(err.name!=='NotAllowedError')alert('Capture failed: '+err.message);}
 };
 
 // ---------- уровень «Mistake» (Free Flow Flava, 110 BPM) ----------
@@ -1513,17 +1539,58 @@ function buildYalaChart(diff='hard'){
 }
 
 const bLevel=document.getElementById('bLevel'),levelAudio=document.getElementById('levelAudio'),
-  bLevelYala=document.getElementById('bLevelYala'),levelAudioYala=document.getElementById('levelAudioYala');
-const LEVEL_BTN='★ Free Flow Flava — Mistake',LEVEL_YALA_BTN='★ QMIIR — YALA (Slowed)';
-async function startBundledLevel(config,buildChart,audio,button,buttonLabel){
+  bLevelYala=document.getElementById('bLevelYala'),levelAudioYala=document.getElementById('levelAudioYala'),
+  bStart=document.getElementById('bStart');
+const LEVEL_CHOICES=[
+  {config:LEVEL_MISTAKE,buildChart:buildMistakeChart,audio:levelAudio,button:bLevel,label:'MISTAKE'},
+  {config:LEVEL_YALA,buildChart:buildYalaChart,audio:levelAudioYala,button:bLevelYala,label:'YALA'}
+];
+const levelAudioReady=new WeakMap();
+let selectedLevel=null,selectionToken=0;
+function waitForAudioMetadata(audio){
+  if(audio.readyState>=1)return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const done=()=>{cleanup();resolve();},fail=()=>{cleanup();reject(new Error('audio cannot be decoded on this device'));};
+    const cleanup=()=>{clearTimeout(timer);audio.removeEventListener('loadedmetadata',done);audio.removeEventListener('error',fail);};
+    const timer=setTimeout(()=>{cleanup();reject(new Error('audio preparation timed out'));},30000);
+    audio.addEventListener('loadedmetadata',done,{once:true});audio.addEventListener('error',fail,{once:true});
+  });
+}
+function prepareLevelAudio(audio){
+  let ready=levelAudioReady.get(audio);if(ready)return ready;
+  ready=(async()=>{
+    const rawSrc=audio.getAttribute('src')||'';
+    // Большой data URI ненадёжен как media source на iOS. При выборе трека один раз
+    // превращаем его в Blob URL; отдельный START затем вызывает play() прямым жестом.
+    if(rawSrc.startsWith('data:')){
+      const response=await fetch(rawSrc);if(!response.ok)throw new Error('embedded audio cannot be read');
+      const blob=await response.blob();audio.src=URL.createObjectURL(blob);
+    }
+    const metadata=waitForAudioMetadata(audio);audio.load();await metadata;return true;
+  })();
+  levelAudioReady.set(audio,ready);return ready;
+}
+function refreshStartButton(){
+  if(!selectedLevel){bStart.disabled=true;bStart.textContent='SELECT A TRACK';return;}
+  bStart.disabled=false;bStart.textContent=`▶ START · ${selectedLevel.label}`;
+}
+async function selectLevel(choice){
+  selectedLevel=choice;const token=++selectionToken;
+  for(const item of LEVEL_CHOICES)item.button.classList.toggle('trackSelected',item===choice);
+  bStart.disabled=true;bStart.textContent=`PREPARING ${choice.label}…`;
+  try{await prepareLevelAudio(choice.audio);if(token===selectionToken)refreshStartButton();}
+  catch(err){if(token===selectionToken){bStart.disabled=true;bStart.textContent='AUDIO ERROR';alert('Failed to prepare bundled track: '+err.message);}}
+}
+async function startBundledLevel(config,buildChart,audio){
   ensureAC();
-  button.textContent='Loading…';button.disabled=true;
+  bStart.textContent='STARTING…';bStart.disabled=true;
   try{
     audio.pause();audio.currentTime=0;audio.muted=false;audio.volume=1;
+    const playPromise=audio.play(); // непосредственно внутри пользовательского жеста START
     const map=buildChart(G.diff);
     G.notes=map.notes;G.lightBeats=map.light;G.songDur=config.dur;
     G.beatIv=config.iv;G.travel=travelFor(DIFF[G.diff],config.iv);
-    await audio.play();
+    await playPromise;
     levelSilentFrames=0;
     let captureNode=levelCaptureNodes.get(audio)||null;
     if(!captureNode){
@@ -1548,10 +1615,11 @@ async function startBundledLevel(config,buildChart,audio,button,buttonLabel){
     const label=G.diff==='easy'?'LIGHT':G.diff==='norm'?'MEDIUM':'HARD';
     addText(W/2,H*.42,`${config.title} · ${label}`,'#00e5ff',26);
   }catch(err){audio.pause();alert('Failed to load bundled level: '+err.message);}
-  button.textContent=buttonLabel;button.disabled=false;
+  refreshStartButton();
 }
-bLevel.onclick=()=>startBundledLevel(LEVEL_MISTAKE,buildMistakeChart,levelAudio,bLevel,LEVEL_BTN);
-bLevelYala.onclick=()=>startBundledLevel(LEVEL_YALA,buildYalaChart,levelAudioYala,bLevelYala,LEVEL_YALA_BTN);
+bLevel.onclick=()=>selectLevel(LEVEL_CHOICES[0]);
+bLevelYala.onclick=()=>selectLevel(LEVEL_CHOICES[1]);
+bStart.onclick=()=>{if(selectedLevel)startBundledLevel(selectedLevel.config,selectedLevel.buildChart,selectedLevel.audio);};
 renderLevelRecords();
 </script>
 </body>
