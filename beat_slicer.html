@@ -1,0 +1,1114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Beat Slicer</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#07070c;font-family:system-ui,-apple-system,sans-serif;color:#fff;user-select:none;-webkit-user-select:none}
+  #c{position:fixed;inset:0;display:block;cursor:crosshair;touch-action:none}
+  #menu{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;background:radial-gradient(ellipse at center,#101022 0%,#07070c 72%);z-index:10}
+  h1{font-size:56px;margin:0;letter-spacing:6px;background:linear-gradient(90deg,#ff3e9d,#00e5ff);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 20px rgba(255,62,157,.35))}
+  .row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+  button{font-size:16px;padding:12px 22px;border-radius:12px;border:1px solid #333;background:#14141f;color:#eee;cursor:pointer;transition:.15s}
+  button:hover{border-color:#00e5ff;box-shadow:0 0 14px rgba(0,229,255,.25);transform:translateY(-1px)}
+  button.sel{border-color:#ff3e9d;box-shadow:0 0 14px rgba(255,62,157,.45)}
+  .hint{color:#8b8ba0;font-size:13px;max-width:560px;text-align:center;line-height:1.55;padding:0 16px}
+  #res{color:#cfd0e8;font-size:17px}
+  #res b{color:#00e5ff}
+  #hud{position:fixed;top:14px;left:18px;z-index:5;pointer-events:none;text-shadow:0 0 10px #000}
+  #score{font-size:36px;font-weight:800;font-variant-numeric:tabular-nums}
+  #combo{font-size:17px;color:#00e5ff;min-height:22px}
+  #stop{position:fixed;top:14px;right:18px;z-index:11;display:none;padding:8px 16px;font-size:14px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud" hidden><div id="score">0</div><div id="combo"></div></div>
+<button id="stop">■ Stop (Esc)</button>
+<div id="menu">
+  <h1>BEAT SLICER</h1>
+  <div id="res" hidden></div>
+  <div class="row" id="diffRow">
+    <button data-d="easy">Easy</button>
+    <button data-d="norm" class="sel">Normal</button>
+    <button data-d="hard">Hard</button>
+  </div>
+  <div class="row">
+    <button id="bFile">🎵 Track file</button>
+    <button id="bTab">🖥 Tab audio</button>
+    <button id="bMic">🎤 Microphone</button>
+    <button id="bDemo">⚡ Demo beat</button>
+  </div>
+  <div class="hint">
+    Orbs launch evenly on the BPM grid at a constant speed. Active sections add half-beats. Slice after the ring appears: cutting too early costs 150 points, a missed orb — 100. Stop the mouse and the game waits with no penalties.<br><br>
+    <b>Track file</b> — the most accurate sync (beats are analyzed ahead of time).
+    <b>Tab audio</b> — Chrome only: play music in another tab, pick it and tick “Also share tab audio”.
+  </div>
+</div>
+<input type="file" id="file" accept="audio/*" hidden>
+<script>
+'use strict';
+const cv=document.getElementById('c'),cx=cv.getContext('2d');
+let W=0,H=0;
+function resize(){W=cv.width=innerWidth;H=cv.height=innerHeight;}
+addEventListener('resize',resize);resize();
+addEventListener('contextmenu',e=>e.preventDefault());
+
+const PAL=[330,185,265,45,140];
+const DIFF={
+  easy:{travelBeats:2,   bombP:.05,rMul:1.25,speedTh:.22},
+  norm:{travelBeats:1.5, bombP:.1, rMul:1,   speedTh:.32},
+  hard:{travelBeats:1.25,bombP:.16,rMul:.85, speedTh:.42},
+};
+function travelFor(d,iv){
+  return Math.max(.24,iv*d.travelBeats); // фиксированная длительность: активность её не меняет
+}
+
+const G={mode:null,running:false,diff:'norm',
+  orbs:[],halves:[],parts:[],texts:[],trail:[],pending:[],
+  score:0,combo:0,maxCombo:0,sliced:0,missed:0,bombs:0,earlyCuts:0,
+  passive:false,listenUntil:0,lastInput:0,beatStep:0,energy:0,activityLvl:1,lastBombT:0,
+  multShown:1,multPop:0,multRed:0,lastBeatT:0,
+  liveOffset:Number(localStorage.getItem('bs_tab_offset'))||0,liveErrors:[],liveCalibrated:false,
+  director:{energySum:0,bassSum:0,frames:0,onsets:0,bars:[],dropBars:[],bar:0,
+    lastEnergy:0,lastOnsets:0,dropActive:false,hold:0,cycle:0,cycleMiss:0,predictedDrop:null,level:1},
+  notes:[],lightBeats:[],beatIdx:0,lightIdx:0,lightN:0,
+  beatIv:.5,travel:1.35,songStart:0,songDur:0,srcNode:null,stream:null,
+  demoIv:.53,demoAudioN:0,demoSpawnN:0,
+  bass:0,bassAvg:0,flash:0,flashRed:0,flashWhite:0,shake:0,hue:210,
+  rt:{hist:[],lastDet:0,lastFire:0,nextBeat:0,misses:0,silentFrames:0,runMax:0,intervals:[],interval:.5,
+    envBin:null,acIv:0,acConf:0,lastAc:0,phase:[0,0,0,0],phaseShift:0}};
+window.G=G; // отладка
+window.__bs={get a(){return {analyzeTrack,buildMap,DIFF}}};
+
+// ---------- аудио ----------
+let AC=null,analyser=null,freq=null,musicBus=null,noiseBuf=null;
+function ensureAC(){
+  if(!AC){
+    AC=new (window.AudioContext||window.webkitAudioContext)();
+    analyser=AC.createAnalyser();analyser.fftSize=2048;analyser.smoothingTimeConstant=0; // сглаживание убивает спектральный флюкс
+    freq=new Uint8Array(analyser.frequencyBinCount);
+    musicBus=AC.createGain();musicBus.connect(analyser);musicBus.connect(AC.destination);
+  }
+  if(AC.state==='suspended')AC.resume();
+}
+function noise(){
+  if(!noiseBuf){noiseBuf=AC.createBuffer(1,AC.sampleRate*.3|0,AC.sampleRate);
+    const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;}
+  return noiseBuf;
+}
+function beatPulse(k){
+  G.lastBeatT=AC?AC.currentTime:0; // каждый бит: пульс множителя
+  if(k<1.2)return; // фон вспыхивает только на мощных ударах (дропы), не на каждом бите
+  G.flash=Math.min(1,G.flash+.25+.2*Math.min(2,k));
+  G.hue=(G.hue+18)%360;
+}
+function kick(t,v){
+  const o=AC.createOscillator(),g=AC.createGain();
+  o.type='sine';o.frequency.setValueAtTime(150,t);o.frequency.exponentialRampToValueAtTime(48,t+.1);
+  g.gain.setValueAtTime(v,t);g.gain.exponentialRampToValueAtTime(.001,t+.18);
+  o.connect(g);g.connect(musicBus);o.start(t);o.stop(t+.2);
+}
+function hat(t){
+  const s=AC.createBufferSource(),f=AC.createBiquadFilter(),g=AC.createGain();
+  s.buffer=noise();f.type='highpass';f.frequency.value=7000;
+  g.gain.setValueAtTime(.07,t);g.gain.exponentialRampToValueAtTime(.001,t+.05);
+  s.connect(f);f.connect(g);g.connect(musicBus);s.start(t);s.stop(t+.08);
+}
+
+// ---------- офлайн-анализ трека (режим «файл») ----------
+// Пайплайн: onset envelope (flux по 3 полосам) -> темп (автокорреляция) -> биты (DP, Ellis 2007) -> карта.
+// DP-битрекинг следует за дрейфом темпа сам — накопительной сетки и фолбэка на онсеты больше нет.
+function onsetEnvelope(buf){
+  const sr=buf.sampleRate,data=buf.getChannelData(0);
+  const hop=Math.floor(sr*.0116),hopT=hop/sr; // ~11.6 мс
+  const aLow=1-Math.exp(-2*Math.PI*150/sr),aMid=1-Math.exp(-2*Math.PI*2000/sr);
+  let lpLow=0,lpMid=0;
+  const nF=Math.floor(data.length/hop);
+  const eLow=new Float64Array(nF),eMid=new Float64Array(nF),eHigh=new Float64Array(nF),eFull=new Float64Array(nF);
+  for(let f=0;f<nF;f++){
+    let sL=0,sM=0,sH=0,sF=0;
+    const i0=f*hop,i1=i0+hop;
+    for(let i=i0;i<i1;i++){
+      const x=data[i];
+      lpLow+=aLow*(x-lpLow);lpMid+=aMid*(x-lpMid);
+      const mid=lpMid-lpLow,high=x-lpMid;
+      sL+=lpLow*lpLow;sM+=mid*mid;sH+=high*high;sF+=x*x;
+    }
+    eLow[f]=sL/hop;eMid[f]=sM/hop;eHigh[f]=sH/hop;eFull[f]=sF/hop;
+  }
+  // лог-компрессия + положительная производная (flux) — видит кик даже под лимитером
+  const O=new Float64Array(nF);
+  const lg=e=>Math.log10(1+1e6*e);
+  for(let f=3;f<nF;f++){
+    const dL=Math.max(0,lg(eLow[f])-Math.max(lg(eLow[f-2]),lg(eLow[f-3])));
+    const dM=Math.max(0,lg(eMid[f])-Math.max(lg(eMid[f-2]),lg(eMid[f-3])));
+    const dH=Math.max(0,lg(eHigh[f])-Math.max(lg(eHigh[f-2]),lg(eHigh[f-3])));
+    O[f]=2*dL+dM+dH; // бас важнее
+  }
+  const sorted=Array.from(O).sort((a,b)=>a-b);
+  const p95=sorted[Math.floor(sorted.length*.95)]||1;
+  for(let f=0;f<nF;f++)O[f]=Math.min(2,O[f]/(p95+1e-12));
+  return {O,eFull,hopT};
+}
+function estimateTempo(O,hopT){
+  const minLag=Math.round(.25/hopT),maxLag=Math.round(1/hopT); // 60–240 BPM
+  const n=O.length,ac=new Float64Array(maxLag+1);
+  for(let lag=minLag;lag<=maxLag;lag++){
+    let s=0;
+    for(let k=0;k<n-lag;k++)s+=O[k]*O[k+lag];
+    ac[lag]=s/(n-lag);
+  }
+  // лог-гауссово предпочтение ~120 BPM + вторая гармоника против октавных ошибок
+  let best=minLag,bestScore=-1;
+  for(let lag=minLag;lag<=maxLag;lag++){
+    const bpm=60/(lag*hopT);
+    const w=Math.exp(-.5*Math.pow(Math.log2(bpm/120)/.7,2));
+    let s=ac[lag]*w;
+    if(lag*2<=maxLag)s+=.5*ac[lag*2]*w;
+    if(s>bestScore){bestScore=s;best=lag;}
+  }
+  let lag=best; // параболическое уточнение вершины
+  if(best>minLag&&best<maxLag){
+    const y0=ac[best-1],y1=ac[best],y2=ac[best+1],den=y0-2*y1+y2;
+    if(Math.abs(den)>1e-12)lag=best+.5*(y0-y2)/den;
+  }
+  return lag*hopT;
+}
+function trackBeats(O,hopT,iv){
+  const n=O.length,ivF=iv/hopT,lambda=3; // жёсткость темпа
+  const C=new Float64Array(n),from=new Int32Array(n).fill(-1);
+  const jMin=Math.round(ivF*.5),jMax=Math.round(ivF*1.5);
+  for(let k=0;k<n;k++){
+    let bestV=0,bestJ=-1;
+    const a=Math.max(0,k-jMax),b=k-jMin;
+    for(let j=a;j<=b;j++){
+      const pen=Math.log((k-j)/ivF);
+      const v=C[j]-lambda*pen*pen;
+      if(v>bestV){bestV=v;bestJ=j;}
+    }
+    C[k]=O[k]+bestV;from[k]=bestJ;
+  }
+  let end=n-1;
+  for(let k=Math.max(0,n-Math.round(2*ivF));k<n;k++)if(C[k]>C[end])end=k;
+  const beats=[];
+  for(let k=end;k>=0;k=from[k]){beats.push(k*hopT);if(from[k]<0)break;}
+  beats.reverse();
+  return beats;
+}
+function analyzeTrack(buf){
+  const {O,eFull,hopT}=onsetEnvelope(buf);
+  const iv0=estimateTempo(O,hopT);
+  const beats=trackBeats(O,hopT,iv0);
+  const gaps=beats.slice(1).map((t,i)=>t-beats[i]).sort((a,b)=>a-b);
+  const iv=gaps.length?gaps[gaps.length>>1]:iv0; // медианный интервал финальных битов
+  // уверенность: onset-энергия на битах против средней (для диагностики)
+  let onB=0;
+  for(const t of beats)onB+=O[Math.min(O.length-1,Math.round(t/hopT))];
+  let all=0;for(let i=0;i<O.length;i++)all+=O[i];
+  const conf=(onB/Math.max(1,beats.length))/(all/O.length+1e-9);
+  return {iv,beats,O,eFull,hopT,conf};
+}
+function buildMap(an,d){
+  const {beats,eFull,hopT,O}=an;
+  const n=eFull.length,P=new Float64Array(n+1);
+  for(let i=0;i<n;i++)P[i+1]=P[i]+eFull[i];
+  const win=Math.round(1.5/hopT);
+  const sectDb=t=>{ // громкость секции ±1.5 c в дБ
+    const i=Math.max(0,Math.min(n-1,Math.round(t/hopT)));
+    const a=Math.max(0,i-win),b=Math.min(n,i+win);
+    return 10*Math.log10((P[b]-P[a])/(b-a)+1e-12);
+  };
+  const dbs=beats.map(sectDb);
+  const sorted=[...dbs].sort((a,b)=>a-b);
+  const q=p=>sorted[Math.min(sorted.length-1,Math.floor(p*sorted.length))];
+  const p10=q(.1),p90=q(.9),silence=q(.95)-30; // тишина: −30 дБ от пика трека
+  const span=Math.max(3,p90-p10);
+  // 4 уровня активности: частота растёт с четвертей до восьмых, полёт одновременно ускоряется.
+  const T=[.22,.58,.82],HYS=.045;
+  const notes=[],light=[];
+  const bombRoll=(t,lvl)=>{ // та же вероятность бомб, что и в live/демо
+    if(t-lastBombT<=1.2)return false;
+    const p=d.bombP*(lvl===3?1.5:lvl===2?1:.5);
+    if(Math.random()>=p)return false;
+    lastBombT=t;return true;
+  };
+  let lvl=1,lastBombT=-9;
+  for(let i=0;i<beats.length;i++){
+    const t=beats[i],db=dbs[i];
+    if(db<silence){lvl=1;continue;}
+    const u=(db-p10)/span;
+    const rl=u>=T[2]?3:u>=T[1]?2:u>=T[0]?1:0;
+    if(i%4===0){                              // плотность меняется только на границе такта
+      if(rl>lvl&&u>=T[rl-1]+HYS)lvl=rl;
+      else if(rl<lvl&&u<T[lvl-1]-HYS)lvl=rl;
+    }
+    light.push({t,k:lvl>=3?(i%4===0?1.6:.9):.5}); // вспышка — раз в такт и только на дропе
+    const localIv=i+1<beats.length?beats[i+1]-t:.5;
+    const base=d===DIFF.hard?true:d===DIFF.norm?(lvl>=2||i%2===0):i%2===0;
+    if(base){
+      const bomb=bombRoll(t,lvl);
+      notes.push({t,orbs:bomb?0:1,bomb,lvl,travel:travelFor(d,localIv)});
+    }
+    const offbeat=d===DIFF.hard?((lvl===3&&i%2===0)||(lvl===2&&i%4===0)):
+      (lvl===3&&i%4===0);
+    if(offbeat){
+      const t2=t+localIv/2,bomb=bombRoll(t2,lvl);
+      notes.push({t:t2,orbs:bomb?0:1,bomb,lvl,travel:travelFor(d,localIv)});
+    }
+  }
+  notes.sort((a,b)=>a.t-b.t);
+  return {notes,light};
+}
+
+// ---------- реалтайм-детект бита (whitening + флюкс + PLL) + освещение ----------
+// Схема BTrack, упрощённая: adaptive whitening -> spectral flux -> адаптивный порог ->
+// PLL-метроном (тикает пока музыка играет, детекты лишь мягко правят фазу/период).
+// Поверх PLL — «слух наперёд»: огибающая онсетов копится ~12 с, каждые 2 с автокорреляция
+// даёт глобальный BPM (устойчив к динамике трека), фаза такта голосуется басом,
+// а период дропов запоминается — уровень 3 включается до подтверждения энергией.
+const ENV_BIN=.012,ENV_N=1024; // бин 12 мс, окно ~12.3 с
+function estimateLiveTempo(rt,now){
+  if(now-rt.lastAc<2||!rt.env||rt.envBin==null)return;
+  rt.lastAc=now;
+  const N=ENV_N,buf=estimateLiveTempo.buf||(estimateLiveTempo.buf=new Float32Array(N));
+  for(let i=0;i<N;i++)buf[i]=rt.env[(rt.envBin+1+i)%N]; // от старого к новому
+  let total=0;for(let i=0;i<N;i++)total+=buf[i];
+  if(total<2){rt.acConf=0;return;} // мало событий — оценке нельзя верить
+  const mean=total/N;
+  const minLag=Math.round(.30/ENV_BIN),maxLag=Math.round(.80/ENV_BIN);
+  const ac=new Float32Array(maxLag+1);
+  for(let lag=minLag;lag<=maxLag;lag++){
+    let s=0;for(let k=0;k<N-lag;k++)s+=(buf[k]-mean)*(buf[k+lag]-mean);
+    ac[lag]=s/(N-lag);
+  }
+  let best=0,bestS=0;
+  for(let lag=minLag;lag<=maxLag;lag++){
+    const bpm=60/(lag*ENV_BIN);
+    const w=Math.exp(-.5*Math.pow(Math.log2(bpm/120)/.9,2));
+    let s=ac[lag]*w;
+    if(lag*2<=maxLag)s+=.4*ac[lag*2]*w;
+    if(s>bestS){bestS=s;best=lag;}
+  }
+  if(!best||ac[best]<=0){rt.acConf=0;return;}
+  let lag=best; // параболическое уточнение вершины
+  if(best>minLag&&best<maxLag){
+    const y0=ac[best-1],y1=ac[best],y2=ac[best+1],den=y0-2*y1+y2;
+    if(Math.abs(den)>1e-9)lag=best+.5*(y0-y2)/den;
+  }
+  let iv=lag*ENV_BIN;
+  while(iv<.375)iv*=2;while(iv>.75)iv/=2;
+  let acm=0;for(let l=minLag;l<=maxLag;l++)acm+=Math.max(0,ac[l]);
+  rt.acIv=iv;
+  rt.acConf=Math.min(3,ac[best]/(acm/(maxLag-minLag+1)+1e-9));
+}
+function updateAudio(now){
+  analyser.getByteFrequencyData(freq);
+  const binHz=AC.sampleRate/analyser.fftSize;
+  // бас — для свечения фона
+  const nB=Math.max(3,Math.round(180/binHz));
+  let sb=0;for(let i=1;i<=nB;i++)sb+=freq[i];
+  G.bass=sb/nB/255;
+  const nBins=Math.min(freq.length,Math.round(4000/binHz));
+  const rt=G.rt;
+  if(!rt.white){rt.white=new Float32Array(freq.length).fill(.02);rt.prevW=new Float32Array(freq.length);}
+  // adaptive whitening: каждый бин нормируется на свой бегущий максимум (спад ~1 с) —
+  // детект не зависит от громкости источника; флюкс = положительные приросты, низ ×2
+  let flux=0,tot=0;
+  for(let i=1;i<nBins;i++){
+    const v=freq[i]/255;
+    tot+=v;
+    rt.white[i]=Math.max(v,rt.white[i]*.983,.02);
+    const w=v/rt.white[i];
+    const df=w-rt.prevW[i];
+    if(df>0)flux+=(i*binHz<250?2:1)*df;
+    rt.prevW[i]=w;
+  }
+  flux/=nBins;tot/=nBins;
+  G.bassAvg=tot;
+  // огибающая онсетов в равномерных бинах — сырьё для автокорреляции общего BPM
+  if(!rt.env)rt.env=new Float32Array(ENV_N);
+  const bin=Math.floor(now/ENV_BIN);
+  if(rt.envBin==null)rt.envBin=bin;
+  while(rt.envBin<bin){rt.envBin++;rt.env[rt.envBin%ENV_N]=0;}
+  rt.env[bin%ENV_N]=Math.max(rt.env[bin%ENV_N],flux);
+  estimateLiveTempo(rt,now);
+  const h=rt.hist;h.push(flux);if(h.length>64)h.shift();
+  let mean=0;for(const v of h)mean+=v;mean/=h.length;
+  const th=mean*1.5+.008;
+  rt.runMax=Math.max(tot,(rt.runMax||0)*.998);
+  rt.energySlow=rt.energySlow==null?tot:rt.energySlow+(tot-rt.energySlow)*.006;
+  const energyTarget=Math.max(0,Math.min(1,(tot/(rt.energySlow+1e-4)-.82)/.62+G.bass*.3));
+  G.energy+=(energyTarget-G.energy)*.045;
+  const silent=tot<Math.max(.008,rt.runMax*.1);
+  rt.silentFrames=silent?(rt.silentFrames||0)+1:0;
+  const quiet=rt.silentFrames>120; // ~2 с тишины — сетка гаснет
+  const live=G.mode==='tab'||G.mode==='mic';
+  if(live&&G.running){
+    const dr=G.director;
+    dr.energySum+=G.energy;dr.bassSum+=G.bass;dr.frames++;
+  }
+  // онсет
+  if(h.length>40&&!silent&&flux>th&&now-rt.lastDet>.15){
+    if(live&&G.running)G.director.onsets++;
+    let dt=now-rt.lastDet;rt.lastDet=now;
+    while(dt<.375)dt*=2;while(dt>.75)dt/=2; // период в 80–160 BPM
+    rt.intervals.push(dt);if(rt.intervals.length>16)rt.intervals.shift();
+    const s2=[...rt.intervals].sort((x,y)=>x-y),med=s2[s2.length>>1];
+    // сплав: медиана онсет-интервалов + автокорреляционный BPM — второй стабильнее на динамике
+    let fused=med;
+    if(rt.acConf>1.2&&rt.acIv){
+      let a=rt.acIv;
+      while(a<med/1.45)a*=2;while(a>med*1.45)a/=2; // октаву АК подтягиваем к онсетной
+      const w=Math.min(.75,.25*rt.acConf);
+      fused=med*(1-w)+a*w;
+    }
+    rt.interval+=(fused-rt.interval)*.5;
+    const iv=rt.interval;
+    if(rt.nextBeat){
+      let err=now-rt.nextBeat;err-=Math.round(err/iv)*iv; // фазовая ошибка в ±iv/2
+      if(Math.abs(err)<iv*.35){rt.nextBeat+=err*.3;rt.misses=0;} // мягкая коррекция
+      else if(++rt.misses>=4){rt.nextBeat=now+iv;rt.misses=0;}   // хард-ресинк
+    }else rt.nextBeat=now+iv;
+    if(!G.running)beatPulse(flux/th-1); // светомузыка в меню
+    // live: вспышка только от действительно мощного удара, не чаще ~раза в такт
+    if(G.running&&live&&flux>th*2.2&&now-(rt.lastFlash||0)>1.4){rt.lastFlash=now;beatPulse(1.6);}
+  }
+  // PLL-метроном: спавн и свет строго по предсказанной сетке, пока музыка играет
+  if(live&&G.running&&rt.nextBeat){
+    if(quiet){
+      rt.nextBeat=0;rt.phase.fill(0);
+      Object.assign(G.director,{energySum:0,bassSum:0,frames:0,onsets:0,dropActive:false,level:1});
+      return;
+    } // тишина: перелочимся на первом онсете
+    const iv=rt.interval;
+    const correctedNow=now-G.liveOffset;
+    const LOOK=.12; // спавним с опережением: полёт стартует по сетке, а не «когда кадр успел»
+    if(correctedNow>=rt.nextBeat-LOOK){
+      fireBeat(rt.nextBeat+G.liveOffset,.8);
+      rt.nextBeat+=iv*Math.max(1,Math.ceil((correctedNow-rt.nextBeat)/iv+1e-6)); // после лага не сыпать пачкой
+    }
+  }
+}
+function fireBeat(t,k){
+  if(t-G.rt.lastFire<Math.min(G.rt.interval,.6)*.4)return; // защита от дублей
+  G.rt.lastFire=t;
+  if(G.running&&(G.mode==='tab'||G.mode==='mic')){
+    // голос за долю такта: бас+энергия на бите; максимум по фазе = «раз» такта
+    const ph=G.rt.phase;
+    for(let i=0;i<4;i++)ph[i]*=.93;
+    ph[G.beatStep%4]+=G.bass*1.5+Math.max(0,G.energy);
+    if((G.beatStep-G.rt.phaseShift+4096)%4===0&&G.energy>.55)beatPulse(1.25); // акцент сильной доли
+    else beatPulse(k);
+    liveSpawn(k+1,t);
+  }else beatPulse(k);
+}
+function canSchedule(hitT){return !G.passive&&(!G.listenUntil||hitT>=G.listenUntil);}
+function medianOf(values){
+  if(!values.length)return 0;
+  const a=[...values].sort((x,y)=>x-y),m=a.length>>1;
+  return a.length%2?a[m]:(a[m-1]+a[m])/2;
+}
+function updateLiveDirector(step){
+  const dr=G.director;
+  if(step%4!==0)return dr.level;
+  const bar=step/4|0,frames=Math.max(1,dr.frames);
+  const energy=dr.frames?dr.energySum/frames:G.energy;
+  const bass=dr.frames?dr.bassSum/frames:G.bass;
+  const onsets=dr.onsets;
+  const baseline=medianOf(dr.bars.slice(-8))||.24;
+  const trend=energy-dr.lastEnergy,onsetTrend=onsets-dr.lastOnsets;
+  const dropThreshold=Math.max(.52,baseline+.16);
+  const actualDrop=G.energy>.76||(energy>dropThreshold&&bass>.22&&onsets>=3);
+
+  if(actualDrop&&!dr.dropActive){
+    dr.dropBars.push(bar);if(dr.dropBars.length>8)dr.dropBars.shift();
+    if(dr.dropBars.length>=3){
+      const gaps=[];for(let i=1;i<dr.dropBars.length;i++)gaps.push(dr.dropBars[i]-dr.dropBars[i-1]);
+      dr.cycle=Math.max(2,Math.round(medianOf(gaps)));
+    }
+  }
+  if(actualDrop){dr.dropActive=true;dr.hold=2;}
+  else if(energy<dropThreshold*.72&&G.energy<.45)dr.dropActive=false;
+
+  const lastDrop=dr.dropBars.length?dr.dropBars[dr.dropBars.length-1]:-999;
+  dr.predictedDrop=dr.cycle?lastDrop+dr.cycle:null;
+  // прогноз промахнулся дважды подряд — структура трека сменилась, период забываем
+  if(dr.cycle&&bar===dr.predictedDrop+2&&lastDrop<dr.predictedDrop-1&&!actualDrop&&!dr.dropActive){
+    if(++dr.cycleMiss>=2){dr.cycle=0;dr.predictedDrop=null;}
+    dr.cycleMiss=Math.min(dr.cycleMiss,2);
+  }else if(actualDrop)dr.cycleMiss=0;
+  const barsUntil=dr.predictedDrop==null?999:dr.predictedDrop-bar;
+  const forecast=barsUntil===0;   // прогнозный бар дропа: качаем до подтверждения энергией
+  const preBuild=barsUntil===1;   // такт до прогноза — разгон
+  const buildup=dr.bars.length>0&&(trend>.065||onsetTrend>=2||energy>baseline+.09);
+  if(actualDrop||dr.hold>0){dr.level=3;if(!actualDrop)dr.hold--;}
+  else if(forecast)dr.level=3;
+  else if(preBuild||buildup)dr.level=2;
+  else dr.level=1;
+
+  // выравнивание по сильной доле: дабл-биты и бомбы лягут на «раз», а не куда попало
+  const ph=G.rt.phase;let mx=0;
+  for(let i=1;i<4;i++)if(ph[i]>ph[mx])mx=i;
+  if(mx!==G.rt.phaseShift&&ph[mx]>ph[G.rt.phaseShift]*1.35)G.rt.phaseShift=mx;
+
+  dr.bars.push(energy);if(dr.bars.length>24)dr.bars.shift();
+  dr.bar=bar;dr.lastEnergy=energy;dr.lastOnsets=onsets;
+  dr.energySum=0;dr.bassSum=0;dr.frames=0;dr.onsets=0;
+  return dr.level;
+}
+function liveSpawn(str,beatT=AC.currentTime){
+  const d=DIFF[G.diff];
+  const step=G.beatStep++;
+  const as=step-G.rt.phaseShift+4096; // шаг, выровненный по сильной доле такта
+  const iv=G.rt.interval||.5;
+  if(step%4===0)G.activityLvl=updateLiveDirector(step);
+  const lvl=G.activityLvl;
+  const travel=travelFor(d,iv),hitT=beatT+travel;
+  // норм: каждый бит только на активных участках; хард: каждый бит, офбиты дозированно
+  const base=G.diff==='hard'?true:G.diff==='norm'?(lvl>=2||as%2===0):as%2===0;
+  if(base&&canSchedule(hitT))spawnSet(hitT,1,travel,as,lvl,true);
+  const offbeat=G.diff==='hard'?((lvl===3&&as%2===0)||(lvl===2&&as%4===0)):
+    (lvl===3&&as%4===0);
+  if(offbeat){
+    const at=beatT+iv/2;
+    G.pending.push({at,hitT:at+travel,count:1,travel,step:as,lvl,allowBomb:true});
+  }
+}
+
+// ---------- спавн ----------
+function spawnNote(nt,hitT){ // нота карты (режим «файл»)
+  const travel=nt.travel||G.travel;
+  if(nt.bomb)spawnOrb(hitT,travel,'bomb',1);
+  if(nt.orbs>=2){spawnOrb(hitT,travel,'orb',0);spawnOrb(hitT,travel,'orb',1);}
+  else if(nt.orbs===1)spawnOrb(hitT,travel,'orb',nt.bomb?0:undefined);
+}
+function spawnSet(hitT,count,travel,step=0,lvl=1,allowBomb=false){
+  const d=DIFF[G.diff];
+  // бомбы вероятностью за спавн, чаще на активных участках; не чаще раза в 1.2 с
+  const p=d.bombP*(lvl===3?1.5:lvl===2?1:.5);
+  const bomb=allowBomb&&hitT-G.lastBombT>1.2&&Math.random()<p;
+  if(bomb){G.lastBombT=hitT;spawnOrb(hitT,travel,'bomb');return;}
+  if(count>1){spawnOrb(hitT,travel,'orb',0);spawnOrb(hitT,travel,'orb',1);}
+  else spawnOrb(hitT,travel,'orb');
+}
+function spawnOrb(hitT,travel,type,side){
+  const d=DIFF[G.diff];
+  // физика — по фактическому времени до удара (после лага кадра шар всё равно прилетит вовремя)
+  const tr=Math.max(.24,hitT-AC.currentTime);
+  const fr=side===0?[.08,.45]:side===1?[.55,.92]:[.08,.92];
+  const x0=W*(fr[0]+Math.random()*(fr[1]-fr[0]));
+  const xt=Math.min(W*.94,Math.max(W*.06,x0+(Math.random()*2-1)*W*.22));
+  const y0=H+60,yt=H*(.22+Math.random()*.34);
+  // гравитация подбирается так, чтобы вершина дуги была ровно в yt в момент удара:
+  // шар зависает в верхней точке под схлопывание кольца и не улетает за экран
+  const grav=2*(y0-yt)/(tr*tr);
+  const vy=-grav*tr;
+  const vx=(xt-x0)/tr;
+  const r=(type==='bomb'?26:30+Math.random()*10)*d.rMul;
+  const cueAt=AC.currentTime+tr*.42;
+  G.orbs.push({x:x0,y:y0,vx,vy,g:grav,r,type,hitT,travel:tr,cueAt,
+    sourceLive:G.mode==='tab',hue:PAL[Math.random()*PAL.length|0]});
+}
+
+// ---------- слайс ----------
+function segDist(ax,ay,bx,by,px,py){
+  const dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy||1;
+  let t=((px-ax)*dx+(py-ay)*dy)/l2;t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(ax+t*dx),py-(ay+t*dy));
+}
+function sliceSegment(a,b){
+  const now=AC.currentTime;
+  const ang=Math.atan2(b.y-a.y,b.x-a.x); // угол взмаха — по нему расходятся половинки
+  for(let i=G.orbs.length-1;i>=0;i--){
+    const o=G.orbs[i];
+    if(segDist(a.x,a.y,b.x,b.y,o.x,o.y)<o.r+8){
+      G.orbs.splice(i,1);
+      o.type==='bomb'?hitBomb(o):hitOrb(o,now,ang);
+    }
+  }
+}
+function spawnHalves(o,ang){ // две половинки вдоль линии разреза, в стиле fruit ninja
+  for(const s of[0,1]){
+    const rot=ang+Math.PI*s;
+    const bx=-Math.sin(rot),by=Math.cos(rot); // куда смотрит «пузо» половинки
+    G.halves.push({x:o.x+bx*3,y:o.y+by*3,
+      vx:o.vx*.35+bx*170+(Math.random()-.5)*60,
+      vy:o.vy*.35+by*170-130,
+      rot,vr:(s?1:-1)*(1.5+Math.random()*2.5),
+      r:o.r,hue:o.hue,life:.8,max:.8});
+  }
+}
+function learnLiveOffset(err){
+  if(Math.abs(err)>.24)return; // случайный взмах не должен сдвигать всю музыкальную сетку
+  G.liveErrors.push(err);if(G.liveErrors.length>12)G.liveErrors.shift();
+  if(G.liveErrors.length<5)return;
+  const sorted=[...G.liveErrors].sort((a,b)=>a-b),median=sorted[sorted.length>>1];
+  G.liveOffset=Math.max(-.22,Math.min(.12,G.liveOffset+median*.25));
+  G.liveCalibrated=true;
+  localStorage.setItem('bs_tab_offset',String(G.liveOffset));
+}
+function multOf(c){ // ×2 уже с 4 подряд — быстрый вход в драйв, дальше ступени реже
+  if(c<4)return 1;if(c<12)return 2;if(c<24)return 3;if(c<40)return 4;
+  return 5+Math.floor((c-40)/24);
+}
+function spawnSlash(x,y,ang,r){ // белая вспышка-лезвие вдоль линии разреза
+  G.parts.push({x,y,vx:0,vy:0,slash:true,ang,len:r*3.4,life:.16,max:.16,hue:G.hue});
+}
+function hitOrb(o,now,ang){
+  spawnHalves(o,ang);
+  spawnSlash(o.x,o.y,ang,o.r);
+  if(now<o.cueAt){
+    G.earlyCuts++;G.combo=0;G.score-=150;
+    addText(o.x,o.y-o.r,'EARLY −150','#ff6688',18);
+    burst(o.x,o.y,0,o.r*.65);updateHud();return;
+  }
+  const signedErr=now-o.hitT;
+  if(o.sourceLive)learnLiveOffset(signedErr);
+  const liveWindow=G.liveCalibrated?.09:.14;
+  const err=Math.abs(signedErr),perfect=err<(o.sourceLive?liveWindow:.12);
+  G.combo++;G.maxCombo=Math.max(G.maxCombo,G.combo);G.sliced++;
+  const mult=multOf(G.combo);
+  const pts=(perfect?300:err<.3?200:100)*mult;
+  G.score+=pts;
+  addText(o.x,o.y-o.r,(perfect?'PERFECT +':'+')+pts,perfect?'#ffd75e':`hsl(${o.hue} 90% 70%)`,perfect?26:20);
+  burst(o.x,o.y,o.hue,o.r);
+  G.flash=Math.min(1,G.flash+.15);
+  updateHud();
+}
+function blastWave(x,y,r,life=.5){ // рваная ударная волна: зазубренный контур, не неоновый круг
+  const jit=Array.from({length:26},()=>Math.random());
+  G.parts.push({x,y,vx:0,vy:0,blast:true,jit,life,max:life,r});
+}
+function smokePuff(x,y){
+  for(let k=0;k<6;k++){
+    const a=Math.random()*Math.PI*2,v=30+Math.random()*70;
+    G.parts.push({x,y,smoke:true,vx:Math.cos(a)*v,vy:-40-Math.random()*70+Math.sin(a)*30,
+      r:16+Math.random()*26,life:.8+Math.random()*.5,max:1.3});
+  }
+}
+function hitBomb(o){
+  G.score-=400;G.combo=0;G.bombs++;
+  G.shake=44;G.flashRed=1;G.flashWhite=1; // жёсткий белый кадр, потом красное послесвечение
+  addText(o.x,o.y,'-400','#ff4455',34);
+  blastWave(o.x,o.y,o.r*1.4,.55);blastWave(o.x,o.y,o.r*.7,.4);
+  smokePuff(o.x,o.y);
+  burst(o.x,o.y,20,o.r*1.6);burst(o.x,o.y,45,o.r);
+  // взрыв выжигает всё на экране: каждый сгоревший шар -50, уходит взрывом, не разрезом
+  for(let i=G.orbs.length-1;i>=0;i--){
+    const b=G.orbs[i];G.orbs.splice(i,1);
+    if(b.type==='orb'){
+      G.score-=50;
+      addText(b.x,b.y-b.r,'-50','#ff8866',16);
+      burst(b.x,b.y,20,b.r);
+      blastWave(b.x,b.y,b.r*.9,.35);
+    }else{burst(b.x,b.y,0,b.r*1.4);blastWave(b.x,b.y,b.r,.4);smokePuff(b.x,b.y);}
+  }
+  updateHud();
+}
+function missOrb(){
+  G.missed++;G.combo=0;G.score-=100;updateHud();
+}
+function burst(x,y,hue,r){
+  for(let i=0;i<16;i++){ // сноп искр, как от резки металла: быстрые, тонкие, короткоживущие
+    const a=Math.random()*Math.PI*2,v=160+Math.random()*460;
+    G.parts.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v-110,life:.3+Math.random()*.35,max:.65,hue,r:1.2+Math.random()*1.8});
+  }
+  G.parts.push({x,y,vx:0,vy:0,life:.3,max:.3,hue,ring:true,r});
+}
+function addText(x,y,txt,color,size){G.texts.push({x,y,txt,color,size,life:1});}
+
+// ---------- ввод ----------
+let lastP=null;
+function currentBeatIv(){return G.mode==='demo'?G.demoIv:G.mode==='file'?G.beatIv:(G.rt.interval||.5);}
+function enterPassive(){
+  if(!G.running||G.passive)return;
+  G.passive=true;G.listenUntil=0;G.orbs.length=0;G.pending.length=0;lastP=null;updateHud();
+}
+function resumeFromPassive(){
+  if(!G.running||!G.passive)return;
+  const iv=currentBeatIv();
+  G.passive=false;G.listenUntil=AC.currentTime+iv*4;
+  G.lastInput=performance.now()+iv*4000;updateHud();
+}
+cv.addEventListener('pointermove',e=>{
+  const p={x:e.clientX,y:e.clientY,t:performance.now(),sp:0};
+  G.lastInput=p.t;if(G.passive)resumeFromPassive();
+  G.trail.push(p);
+  if(lastP){
+    const dt=p.t-lastP.t||16;
+    p.sp=Math.hypot(p.x-lastP.x,p.y-lastP.y)/dt;
+    if(G.running&&p.sp>DIFF[G.diff].speedTh)sliceSegment(lastP,p);
+  }
+  lastP=p;
+});
+cv.addEventListener('pointerdown',e=>{
+  G.lastInput=performance.now();if(G.passive)resumeFromPassive();
+  lastP={x:e.clientX,y:e.clientY,t:G.lastInput};
+});
+cv.addEventListener('pointerleave',()=>{lastP=null;});
+addEventListener('keydown',e=>{if(e.key==='Escape'&&G.running)stopGame(true);});
+
+// ---------- игровой цикл ----------
+function update(now,dt){
+  const d=DIFF[G.diff];
+  while(G.pending.length&&G.pending[0].at<=now){
+    const p=G.pending.shift();
+    if(canSchedule(p.hitT))spawnSet(p.hitT,p.count,p.travel,p.step,p.lvl,p.allowBomb);
+  }
+  if(G.mode==='file'){
+    const st=now-G.songStart;
+    while(G.beatIdx<G.notes.length){
+      const nt=G.notes[G.beatIdx],travel=nt.travel||G.travel;
+      if(nt.t-travel>st)break;
+      G.beatIdx++;
+      const hit=G.songStart+nt.t;
+      if(hit>now+.25&&canSchedule(hit))spawnNote(nt,hit);
+      else if(hit<=now+.25&&nt.orbs>0&&!G.passive&&(!G.listenUntil||now>=G.listenUntil)){
+        for(let k=0;k<nt.orbs;k++)missOrb();
+      }
+    }
+    // свет: пульс на каждом бите сетки (сильнее на дропах)
+    while(G.lightIdx<G.lightBeats.length&&G.lightBeats[G.lightIdx].t<=st){
+      beatPulse(G.lightBeats[G.lightIdx++].k);
+    }
+    if(st>G.songDur+1.2)stopGame(true);
+  }else if(G.mode==='demo'){
+    const st=now-G.songStart,iv=G.demoIv;
+    while(G.demoAudioN*iv<st+.35){
+      const t=G.songStart+G.demoAudioN*iv;
+      if(t>now-.02){kick(t,G.demoAudioN%4===0?.9:.55);hat(t+iv/2);}
+      G.demoAudioN++;
+    }
+    const sub=iv/2;
+    while(true){
+      const n=G.demoSpawnN,phase=n%64;
+      const lvl=phase>=56?3:phase>=40?2:1;
+      const travel=travelFor(d,iv),hitRel=n*sub;
+      if(hitRel-travel>st)break;
+      G.demoSpawnN++;
+      const hit=G.songStart+hitRel;
+      const beat=n>>1,base=n%2===0&&(G.diff==='hard'?true:
+        G.diff==='norm'?(lvl>=2||beat%2===0):beat%2===0);
+      const extra=n%2===1&&(G.diff==='hard'?((lvl===3&&beat%2===0)||(lvl===2&&beat%4===0)):
+        (lvl===3&&beat%4===0));
+      const play=base||extra;
+      if(hit>now+.25&&play&&canSchedule(hit))spawnSet(hit,1,travel,n,lvl,true);
+    }
+    while(G.lightN*iv<=st){beatPulse(G.lightN%4===0?1.5:.6);G.lightN++;}
+  }
+  for(let i=G.orbs.length-1;i>=0;i--){
+    const o=G.orbs[i];
+    o.vy+=o.g*dt;o.x+=o.vx*dt;o.y+=o.vy*dt;
+    if(o.y>H+90&&o.vy>0){
+      G.orbs.splice(i,1);
+      if(o.type==='orb'&&!G.passive&&(!G.listenUntil||now>=G.listenUntil))missOrb();
+    }
+  }
+  for(let i=G.halves.length-1;i>=0;i--){
+    const h=G.halves[i];h.life-=dt;
+    if(h.life<=0){G.halves.splice(i,1);continue;}
+    h.vy+=1600*dt;h.x+=h.vx*dt;h.y+=h.vy*dt;h.rot+=h.vr*dt;
+  }
+  for(let i=G.parts.length-1;i>=0;i--){
+    const p=G.parts[i];p.life-=dt;
+    if(p.life<=0){G.parts.splice(i,1);continue;}
+    if(p.smoke){p.x+=p.vx*dt;p.y+=p.vy*dt;p.r+=34*dt;p.vx*=1-dt;}
+    else if(!p.ring&&!p.slash&&!p.blast){p.vy+=800*dt;p.x+=p.vx*dt;p.y+=p.vy*dt;}
+  }
+  for(let i=G.texts.length-1;i>=0;i--){
+    const t=G.texts[i];t.life-=dt;t.y-=50*dt;
+    if(t.life<=0)G.texts.splice(i,1);
+  }
+}
+
+function draw(now){
+  cx.setTransform(1,0,0,1,0,0);
+  if(G.shake>.5)cx.setTransform(1,0,0,1,(Math.random()-.5)*G.shake,(Math.random()-.5)*G.shake);
+  cx.fillStyle='#07070c';cx.fillRect(-25,-25,W+50,H+50);
+  // фон подогревает драйв: гейтится множителем (×1 — погашен, ×2 — мерцает под бит, ×3+ — ярче)
+  const mult=multOf(G.combo);
+  const mg=G.running?Math.min(1,(mult-1)*.45):1;
+  const bp=Math.exp(-5*Math.max(0,now-G.lastBeatT));
+  const targ=Math.min(1,(G.bass*.9+G.flash*.7+.5*bp)*mg);
+  G.glowSm=G.glowSm||0;
+  G.glowSm+=(targ-G.glowSm)*(targ>G.glowSm?.2:.06);
+  const glow=G.glowSm;
+  const baseA=G.running?.25*mg:.25;
+  const grd=cx.createRadialGradient(W/2,H*.45,0,W/2,H*.45,Math.max(W,H)*.75);
+  grd.addColorStop(0,`hsla(${G.hue},85%,${18+25*glow}%,${baseA+.5*glow})`);
+  grd.addColorStop(1,'rgba(0,0,0,0)');
+  cx.fillStyle=grd;cx.fillRect(-25,-25,W+50,H+50);
+  if(G.flashRed>0){cx.fillStyle=`rgba(255,30,50,${G.flashRed*.35})`;cx.fillRect(-25,-25,W+50,H+50);}
+  if(G.flashWhite>0){cx.fillStyle=`rgba(255,255,255,${G.flashWhite*.9})`;cx.fillRect(-25,-25,W+50,H+50);}
+  if(freq){
+    const n=56,bw=W/n;
+    if(!G.barsSm)G.barsSm=new Float32Array(n);
+    for(let i=0;i<n;i++){
+      const v=freq[(Math.pow(i/n,1.6)*freq.length*.6|0)+2]/255;
+      const cur=G.barsSm[i]; // плавный подъём + медленный спад — бары не дёргаются
+      G.barsSm[i]=v>cur?cur+(v-cur)*.3:cur*.94;
+      const s=G.barsSm[i],bh=s*s*H*.22*(.5+glow)*(G.running?.35+.65*mg:1);
+      cx.fillStyle=`hsla(${(G.hue+i*3)%360},80%,60%,${G.running?.06+.12*mg:.18})`;
+      cx.fillRect(i*bw+1,H-bh,bw-2,bh);
+    }
+  }
+  for(const h of G.halves)drawHalf(h);
+  for(const o of G.orbs)o.type==='bomb'?drawBomb(o,now):drawOrb(o,now);
+  cx.save();cx.globalCompositeOperation='lighter';cx.lineCap='round';
+  for(const p of G.parts){
+    const a=p.life/p.max;
+    if(p.blast){ // рваный фронт взрыва: зазубренный контур, грязный оранжево-красный
+      const R=p.r*(1+(1-a)*6);
+      cx.save();cx.globalCompositeOperation='source-over';
+      cx.beginPath();
+      for(let i=0;i<=p.jit.length;i++){
+        const j=i%p.jit.length,an=j/p.jit.length*Math.PI*2;
+        const rad=R*(.78+p.jit[j]*.5);
+        const px=p.x+Math.cos(an)*rad,py=p.y+Math.sin(an)*rad;
+        i?cx.lineTo(px,py):cx.moveTo(px,py);
+      }
+      cx.closePath();
+      cx.strokeStyle=`rgba(255,${60+140*a|0},25,${a})`;cx.lineWidth=3+11*a;cx.stroke();
+      cx.strokeStyle=`rgba(35,8,8,${a*.85})`;cx.lineWidth=1+4*a;cx.stroke();
+      cx.restore();
+    }else if(p.smoke){ // копоть: тёмные клубы поверх неона
+      cx.save();cx.globalCompositeOperation='source-over';
+      const g2=cx.createRadialGradient(p.x,p.y,p.r*.2,p.x,p.y,p.r);
+      g2.addColorStop(0,`rgba(28,22,22,${a*.5})`);
+      g2.addColorStop(1,'rgba(28,22,22,0)');
+      cx.fillStyle=g2;cx.beginPath();cx.arc(p.x,p.y,p.r,0,7);cx.fill();
+      cx.restore();
+    }else if(p.slash){ // росчерк лезвия: белая полоса с цветным ореолом, чуть растёт и тает
+      const grow=1+(1-a)*.7,hl=p.len*grow/2;
+      cx.save();cx.translate(p.x,p.y);cx.rotate(p.ang);
+      cx.shadowColor=`hsl(${p.hue} 100% 65%)`;cx.shadowBlur=16;
+      cx.strokeStyle=`hsla(${p.hue},100%,70%,${a*.8})`;cx.lineWidth=6*a;
+      cx.beginPath();cx.moveTo(-hl,0);cx.lineTo(hl,0);cx.stroke();
+      cx.shadowBlur=0;
+      cx.strokeStyle=`rgba(255,255,255,${a})`;cx.lineWidth=2.5*a;
+      cx.beginPath();cx.moveTo(-hl,0);cx.lineTo(hl,0);cx.stroke();
+      cx.restore();
+    }else if(p.ring){
+      cx.strokeStyle=`hsla(${p.hue},90%,70%,${a})`;cx.lineWidth=3;
+      cx.beginPath();cx.arc(p.x,p.y,p.r*(1+(1-a)*2.5),0,7);cx.stroke();
+    }else{ // искра: штрих вдоль вектора полёта, белая раскалённая сердцевина, мерцает
+      const sv=Math.hypot(p.vx,p.vy)||1;
+      const l=Math.min(26,6+sv*.04),ix=p.vx/sv,iy=p.vy/sv;
+      const fl=a*(.65+.35*Math.random());
+      cx.strokeStyle=`hsla(${p.hue},100%,62%,${fl})`;cx.lineWidth=p.r;
+      cx.beginPath();cx.moveTo(p.x-ix*l,p.y-iy*l);cx.lineTo(p.x,p.y);cx.stroke();
+      cx.strokeStyle=`rgba(255,255,255,${fl*.9})`;cx.lineWidth=p.r*.45;
+      cx.beginPath();cx.moveTo(p.x-ix*l*.55,p.y-iy*l*.55);cx.lineTo(p.x,p.y);cx.stroke();
+    }
+  }
+  cx.restore();
+  for(const t of G.texts){
+    cx.globalAlpha=Math.min(1,t.life*2);
+    cx.font=`800 ${t.size}px system-ui`;cx.textAlign='center';
+    cx.fillStyle=t.color;cx.shadowColor=t.color;cx.shadowBlur=12;
+    cx.fillText(t.txt,t.x,t.y);cx.shadowBlur=0;cx.globalAlpha=1;
+  }
+  drawTrail(performance.now());
+  drawMult(now);
+}
+// след-«катана» по схеме Fruit Ninja: прореживание точек -> сглаживание Чайкина ->
+// единая лента по перпендикулярам, сходящая в остриё к хвосту. Один filled-полигон
+// вместо посегментных штрихов — нет «бусин» от round cap.
+const TRAIL_MS=200;
+function drawTrail(tn){
+  G.trail=G.trail.filter(p=>tn-p.t<TRAIL_MS);
+  if(G.trail.length<3)return;
+  const cg=Math.min(1,G.combo/25); // рост свечения до комбо ×25
+  // 1) выкидываем точки ближе 5px — дрожь руки не ломает ленту
+  const raw=[];
+  for(const p of G.trail){
+    const l=raw[raw.length-1];
+    if(!l||(p.x-l.x)**2+(p.y-l.y)**2>25)raw.push(p);
+  }
+  if(raw.length<3)return;
+  // профиль клинка: широко в середине, острия с обоих концов; скорость (EMA) и комбо раздувают
+  let spE=Math.min(3,raw[0].sp||0);
+  const n1=raw.length-1;
+  let s=raw.map((p,i)=>{
+    spE+=(Math.min(3,p.sp||0)-spE)*.3;
+    const age=1-(tn-p.t)/TRAIL_MS;
+    const blade=Math.pow(Math.sin(i/n1*Math.PI),.65);
+    return {x:p.x,y:p.y,w:(1.6+spE*3.2)*(1+.4*cg)*blade*Math.pow(age,1.2)+.3};
+  });
+  for(let k=0;k<2;k++){ // 2) Чайкин: два прохода срезают углы
+    const o=[s[0]];
+    for(let i=0;i<s.length-1;i++){
+      const a=s[i],b=s[i+1];
+      o.push({x:a.x*.75+b.x*.25,y:a.y*.75+b.y*.25,w:a.w*.75+b.w*.25});
+      o.push({x:a.x*.25+b.x*.75,y:a.y*.25+b.y*.75,w:a.w*.25+b.w*.75});
+    }
+    o.push(s[s.length-1]);s=o;
+  }
+  // 3) нормали к линии — из них строится контур ленты
+  const N=new Array(s.length);
+  for(let i=0;i<s.length;i++){
+    const a=s[Math.max(0,i-1)],b=s[Math.min(s.length-1,i+1)];
+    let dx=b.x-a.x,dy=b.y-a.y;
+    const len=Math.hypot(dx,dy)||1;
+    N[i]={x:s[i].x,y:s[i].y,nx:-dy/len,ny:dx/len,w:s[i].w};
+  }
+  const ribbon=k=>{
+    cx.beginPath();
+    cx.moveTo(N[0].x+N[0].nx*N[0].w*k,N[0].y+N[0].ny*N[0].w*k);
+    for(let i=1;i<N.length;i++)cx.lineTo(N[i].x+N[i].nx*N[i].w*k,N[i].y+N[i].ny*N[i].w*k);
+    for(let i=N.length-1;i>=0;i--)cx.lineTo(N[i].x-N[i].nx*N[i].w*k,N[i].y-N[i].ny*N[i].w*k);
+    cx.closePath();
+  };
+  const head=s[s.length-1],tail=s[0];
+  const h1=G.hue,h2=(G.hue+20+80*cg)%360;
+  const grad=cx.createLinearGradient(tail.x,tail.y,head.x,head.y);
+  grad.addColorStop(0,`hsla(${h1},100%,60%,0)`);
+  grad.addColorStop(.35,`hsla(${h1},100%,60%,.55)`);
+  grad.addColorStop(1,`hsla(${h2},100%,65%,.9)`);
+  cx.save();
+  cx.globalCompositeOperation='lighter';
+  cx.fillStyle=`hsla(${h1},100%,55%,${.08+.12*cg})`;ribbon(2);cx.fill(); // пламя-гало
+  cx.shadowColor=`hsl(${h2} 100% 60%)`;cx.shadowBlur=12+22*cg;
+  cx.fillStyle=grad;ribbon(1);cx.fill();                                   // цветное тело
+  cx.shadowColor='#fff';cx.shadowBlur=6;
+  cx.fillStyle=`rgba(255,255,255,${.7+.3*cg})`;ribbon(.3);cx.fill();       // белое лезвие
+  cx.restore();
+}
+// множитель — центральный геймплейный элемент: неон, пульс под бит, эффекты на рост/сброс
+function drawMult(now){
+  if(!G.running)return;
+  const mult=multOf(G.combo);
+  if(mult>G.multShown){
+    G.multPop=1;
+    burst(W/2,78,(190+mult*38)%360,26+mult*4);
+    addText(W/2,H*.3,'MULTIPLIER ×'+mult,`hsl(${(190+mult*38)%360} 100% 70%)`,34+mult*2);
+  }else if(mult<G.multShown)G.multRed=1;
+  G.multShown=mult;
+  G.multPop*=.93;G.multRed*=.92;
+  const bp=Math.exp(-5*Math.max(0,now-G.lastBeatT)); // пульс от последнего бита
+  const size=(26+Math.min(34,mult*5))*(1+.3*G.multPop+(.05+.02*Math.min(8,mult))*bp);
+  const hue=(190+mult*38)%360;
+  const col=G.multRed>.05?'#ff3b55':`hsl(${hue} 100% ${58+12*bp}%)`;
+  cx.save();
+  cx.textAlign='center';cx.textBaseline='middle';
+  cx.font=`800 ${size}px system-ui`;
+  cx.globalAlpha=mult>1?1:.3+.15*bp; // ×1 тлеет, ждёт разгона
+  cx.shadowColor=col;cx.shadowBlur=16+22*bp+34*G.multPop;
+  cx.fillStyle=col;cx.fillText('×'+mult,W/2,72);
+  cx.shadowBlur=0;
+  cx.fillStyle=`rgba(255,255,255,${.55+.3*bp})`;
+  cx.font=`800 ${size*.96}px system-ui`;
+  cx.fillText('×'+mult,W/2,72);
+  cx.restore();
+}
+function drawOrb(o,now){ // неоновая «шайба»: гало + тёмная сердцевина + кольцо с белой раскалённой кромкой
+  const tl=o.hitT-now;
+  cx.save();
+  cx.globalCompositeOperation='lighter';
+  const halo=cx.createRadialGradient(o.x,o.y,o.r*.5,o.x,o.y,o.r*2.1);
+  halo.addColorStop(0,`hsla(${o.hue},100%,60%,.5)`);
+  halo.addColorStop(1,'hsla(0,0%,0%,0)');
+  cx.fillStyle=halo;cx.beginPath();cx.arc(o.x,o.y,o.r*2.1,0,7);cx.fill();
+  cx.globalCompositeOperation='source-over';
+  cx.fillStyle='rgba(7,7,12,.85)';cx.beginPath();cx.arc(o.x,o.y,o.r*.72,0,7);cx.fill();
+  cx.shadowColor=`hsl(${o.hue} 100% 60%)`;cx.shadowBlur=24;
+  cx.strokeStyle=`hsl(${o.hue} 100% 58%)`;cx.lineWidth=o.r*.34;
+  cx.beginPath();cx.arc(o.x,o.y,o.r*.78,0,7);cx.stroke();
+  cx.shadowBlur=0;
+  cx.strokeStyle='rgba(255,255,255,.95)';cx.lineWidth=o.r*.1;
+  cx.beginPath();cx.arc(o.x,o.y,o.r*.78,0,7);cx.stroke();
+  if(tl>0&&now>=o.cueAt){ // кольцо появляется позже старта полёта: до него разрез — фальстарт
+    const cueSpan=Math.max(.08,o.hitT-o.cueAt),q=Math.min(1,tl/cueSpan);
+    const rr=o.r+q*o.r*2.4;
+    cx.strokeStyle=`hsla(${o.hue},100%,70%,${.7*(1-q)+.15})`;
+    cx.shadowColor=`hsl(${o.hue} 100% 60%)`;cx.shadowBlur=10;
+    cx.lineWidth=2.5;cx.beginPath();cx.arc(o.x,o.y,rr,0,7);cx.stroke();
+    cx.shadowBlur=0;
+  }else if(tl<=0&&tl>-.13){
+    cx.strokeStyle='rgba(255,255,255,.95)';cx.shadowColor='#fff';cx.shadowBlur=14;
+    cx.lineWidth=3;cx.beginPath();cx.arc(o.x,o.y,o.r+4,0,7);cx.stroke();
+    cx.shadowBlur=0;
+  }
+  cx.restore();
+}
+function drawHalf(h){ // половинка разрубленного шара: неоновая дуга + раскалённый срез
+  const a=h.life/h.max;
+  cx.save();
+  cx.translate(h.x,h.y);cx.rotate(h.rot);
+  cx.globalAlpha=a;
+  cx.fillStyle='rgba(7,7,12,.85)';
+  cx.beginPath();cx.arc(0,0,h.r*.72,0,Math.PI);cx.closePath();cx.fill();
+  cx.shadowColor=`hsl(${h.hue} 100% 60%)`;cx.shadowBlur=18;
+  cx.strokeStyle=`hsl(${h.hue} 100% 58%)`;cx.lineWidth=h.r*.3;
+  cx.beginPath();cx.arc(0,0,h.r*.78,0,Math.PI);cx.stroke();
+  cx.shadowBlur=0;
+  cx.strokeStyle='rgba(255,255,255,.9)';cx.lineWidth=h.r*.09;
+  cx.beginPath();cx.arc(0,0,h.r*.78,0,Math.PI);cx.stroke();
+  cx.strokeStyle=`hsla(${h.hue},100%,85%,.95)`;cx.lineWidth=h.r*.12;
+  cx.beginPath();cx.moveTo(-h.r*.82,0);cx.lineTo(h.r*.82,0);cx.stroke();
+  cx.restore();
+}
+function drawBomb(o,now){
+  cx.save();
+  const pulse=.6+.4*Math.sin(now*10);
+  cx.shadowColor='#ff2040';cx.shadowBlur=20*pulse;
+  cx.fillStyle='#1a1018';
+  cx.beginPath();cx.arc(o.x,o.y,o.r,0,7);cx.fill();
+  cx.strokeStyle=`rgba(255,40,70,${.5+.5*pulse})`;cx.lineWidth=3;cx.stroke();
+  for(let i=0;i<8;i++){
+    const a=i/8*Math.PI*2+now;
+    cx.beginPath();
+    cx.moveTo(o.x+Math.cos(a)*o.r,o.y+Math.sin(a)*o.r);
+    cx.lineTo(o.x+Math.cos(a)*(o.r+8),o.y+Math.sin(a)*(o.r+8));
+    cx.stroke();
+  }
+  cx.shadowBlur=0;
+  cx.font=`800 ${o.r}px system-ui`;cx.textAlign='center';cx.textBaseline='middle';
+  cx.fillStyle='#ff3050';cx.fillText('✖',o.x,o.y+2);
+  cx.restore();
+}
+
+let lastTs=0;
+function loop(ts){
+  requestAnimationFrame(loop);
+  const dt=Math.min(.05,(ts-lastTs)/1000||.016);lastTs=ts;
+  const now=AC?AC.currentTime:0;
+  if(AC)updateAudio(now);
+  if(G.running){
+    if(!G.passive&&performance.now()-G.lastInput>2600)enterPassive();
+    if(G.listenUntil&&now>=G.listenUntil){G.listenUntil=0;updateHud();}
+    update(now,dt);
+  }
+  G.flash=Math.max(0,G.flash-dt*2.2);
+  G.flashRed=Math.max(0,G.flashRed-dt*2.5);
+  G.flashWhite=Math.max(0,G.flashWhite-dt*7); // резкий удар по глазам на ~2 кадра
+
+  G.shake=Math.max(0,G.shake-dt*40);
+  G.hue=(G.hue+dt*6)%360;
+  draw(now);
+}
+requestAnimationFrame(loop);
+
+// ---------- UI / режимы ----------
+const menu=document.getElementById('menu'),hud=document.getElementById('hud'),
+  scoreEl=document.getElementById('score'),comboEl=document.getElementById('combo'),
+  stopBtn=document.getElementById('stop'),fileInp=document.getElementById('file'),
+  resEl=document.getElementById('res'),bFile=document.getElementById('bFile');
+
+document.querySelectorAll('#diffRow button').forEach(b=>b.onclick=()=>{
+  G.diff=b.dataset.d;
+  document.querySelectorAll('#diffRow button').forEach(x=>x.classList.toggle('sel',x===b));
+});
+function updateHud(){
+  scoreEl.textContent=G.score;
+  if(G.passive)comboEl.textContent='paused · move to resume';
+  else if(G.listenUntil)comboEl.textContent='listening to the beat';
+  else comboEl.textContent=G.combo>1?`×${G.combo} combo · multiplier ×${multOf(G.combo)}`:'';
+}
+function startRun(mode){
+  G.mode=mode;G.running=true;
+  G.score=0;G.combo=0;G.maxCombo=0;G.sliced=0;G.missed=0;G.bombs=0;G.earlyCuts=0;
+  G.passive=false;G.listenUntil=0;G.lastInput=performance.now();G.beatStep=0;G.energy=0;G.activityLvl=1;G.lastBombT=0;
+  G.multShown=1;G.multPop=0;G.multRed=0;G.lastBeatT=0;
+  if(mode!=='tab')G.liveOffset=0;
+  G.liveErrors.length=0;G.liveCalibrated=false;
+  G.beatIdx=0;G.lightIdx=0;G.lightN=0;
+  G.orbs.length=0;G.halves.length=0;G.parts.length=0;G.texts.length=0;G.pending.length=0;
+  G.rt.lastDet=G.rt.lastFire=AC.currentTime;G.rt.intervals.length=0;
+  G.rt.interval=.5;G.rt.hist.length=0;G.rt.nextBeat=0;G.rt.misses=0;G.rt.silentFrames=0;
+  G.rt.runMax=0;G.rt.energySlow=null;
+  G.rt.phase.fill(0);G.rt.phaseShift=0; // огибающую и BPM не трогаем: вкладка уже наслушала темп в меню
+  Object.assign(G.director,{energySum:0,bassSum:0,frames:0,onsets:0,bar:0,lastEnergy:0,
+    lastOnsets:0,dropActive:false,hold:0,cycle:0,cycleMiss:0,predictedDrop:null,level:1});
+  G.director.bars.length=0;G.director.dropBars.length=0;
+  updateHud();
+  menu.style.display='none';hud.hidden=false;stopBtn.style.display='block';
+}
+function stopGame(showRes){
+  if(!G.running)return;
+  G.running=false;
+  try{G.srcNode&&G.srcNode.stop&&G.srcNode.stop(0);}catch(e){}
+  G.srcNode=null;
+  if(G.stream){G.stream.getTracks().forEach(t=>t.stop());G.stream=null;}
+  G.orbs.length=0;G.halves.length=0;G.parts.length=0;G.texts.length=0;G.pending.length=0;
+  menu.style.display='flex';hud.hidden=true;stopBtn.style.display='none';
+  if(showRes){
+    const tot=G.sliced+G.missed+G.earlyCuts;
+    resEl.hidden=false;
+    resEl.innerHTML=`Score: <b>${G.score}</b> · Max combo: <b>${G.maxCombo}</b> · Accuracy: <b>${tot?Math.round(100*G.sliced/tot):0}%</b>${G.earlyCuts?` · Early cuts: ${G.earlyCuts}`:''}${G.bombs?` · Bombs hit: ${G.bombs}`:''}`;
+  }
+}
+stopBtn.onclick=()=>stopGame(true);
+
+bFile.onclick=()=>fileInp.click();
+fileInp.onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  ensureAC();
+  bFile.textContent='Analyzing…';bFile.disabled=true;
+  try{
+    const buf=await AC.decodeAudioData(await f.arrayBuffer());
+    const an=analyzeTrack(buf);
+    const map=buildMap(an,DIFF[G.diff]);
+    if(map.notes.length<8)throw new Error('could not find the beat — try another track');
+    G.notes=map.notes;G.lightBeats=map.light;G.songDur=buf.duration;
+    // базовая длительность полёта в долях бита; активные секции ускоряют её ещё сильнее
+    G.beatIv=an.iv;
+    G.travel=travelFor(DIFF[G.diff],an.iv,1);
+    // диагностика карты
+    const perMin=[];
+    for(const nt of map.notes){const m=nt.t/60|0;perMin[m]=(perMin[m]||0)+1;}
+    console.log(`[beat-slicer] ${(60/an.iv).toFixed(1)} BPM, beats ${an.beats.length}, rhythmicity ×${an.conf.toFixed(1)}, notes ${map.notes.length}, notes/min: ${[...perMin].map(x=>x||0).join(', ')}`);
+    const src=AC.createBufferSource();src.buffer=buf;src.connect(musicBus);
+    G.songStart=AC.currentTime+1.2;src.start(G.songStart);
+    G.srcNode=src;
+    src.onended=()=>{if(G.running&&G.mode==='file')stopGame(true);};
+    startRun('file');
+    addText(W/2,H*.42,`≈${Math.round(60/an.iv)} BPM`,'#00e5ff',30);
+  }catch(err){alert('Failed: '+err.message);}
+  bFile.textContent='🎵 Track file';bFile.disabled=false;fileInp.value='';
+};
+
+document.getElementById('bTab').onclick=async()=>{
+  ensureAC();
+  try{
+    const st=await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
+    st.getVideoTracks().forEach(t=>t.stop());
+    if(!st.getAudioTracks().length){
+      st.getTracks().forEach(t=>t.stop());
+      alert('No audio shared. Pick a TAB (not a window) and tick “Also share tab audio”.');
+      return;
+    }
+    G.stream=st;
+    G.srcNode=AC.createMediaStreamSource(st);
+    G.srcNode.connect(analyser); // только в анализатор, звук уже играет во вкладке
+    const reportedLatency=Number(st.getAudioTracks()[0].getSettings?.().latency)||0;
+    if(reportedLatency>0)G.liveOffset=-Math.min(.18,reportedLatency);
+    else G.liveOffset=Number(localStorage.getItem('bs_tab_offset'))||0;
+    st.getAudioTracks()[0].onended=()=>{if(G.running)stopGame(true);};
+    startRun('tab');
+  }catch(err){if(err.name!=='NotAllowedError')alert('Capture failed: '+err.message);}
+};
+
+document.getElementById('bMic').onclick=async()=>{
+  ensureAC();
+  try{
+    const st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    G.stream=st;
+    G.srcNode=AC.createMediaStreamSource(st);
+    G.srcNode.connect(analyser);
+    startRun('mic');
+  }catch(err){if(err.name!=='NotAllowedError')alert('Microphone denied: '+err.message);}
+};
+
+document.getElementById('bDemo').onclick=()=>{
+  ensureAC();
+  G.demoIv=60/112;G.demoAudioN=0;G.demoSpawnN=0;
+  G.travel=travelFor(DIFF[G.diff],G.demoIv,1);
+  G.songStart=AC.currentTime+.8;
+  startRun('demo');
+};
+</script>
+</body>
+</html>
