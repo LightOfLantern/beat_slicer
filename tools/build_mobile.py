@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the standalone mobile Beat Slicer HTML with both MP3 files embedded."""
+"""Build the standalone mobile Beat Slicer HTML with all bundled MP3 files embedded."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ DEFAULT_OUTPUT = ROOT / "beat_slicer_mobile.html"
 TRACKS = (
     "Free_Flow_Flava_-_Mistake_79894259.mp3",
     "QMIIR_-_YALA_Slowed_81306825.mp3",
+    "Ian_Asher_-_Take_Me_To_The_Moon_81645636.mp3",
 )
 
 

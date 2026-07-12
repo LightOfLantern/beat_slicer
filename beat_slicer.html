@@ -68,17 +68,19 @@
   <div class="row">
     <div class="levelChoice"><button id="bLevel">★ Free Flow Flava — Mistake</button><div id="levelRecordMistake" class="levelRecord"></div></div>
     <div class="levelChoice"><button id="bLevelYala">★ QMIIR — YALA (Slowed)</button><div id="levelRecordYala" class="levelRecord"></div></div>
+    <div class="levelChoice"><button id="bLevelMoon">★ Ian Asher — Take Me (To The Moon)</button><div id="levelRecordMoon" class="levelRecord"></div></div>
   </div>
   <div class="hint">
     Orbs launch evenly on the BPM grid at a constant speed. Active sections add half-beats. Slice after the ring appears: cutting too early costs 150 points, a missed orb — 100. Stop the mouse and the game waits with no penalties.<br><br>
     <b>Track file</b> — the most accurate sync (beats are analyzed ahead of time).
     <b>Tab audio</b> — Chrome only: play music in another tab, pick it and tick “Also share tab audio”.
-    <br><b>Bundled levels</b> — Mistake and YALA (Slowed), each with a hand-authored chart and three difficulties.
+    <br><b>Bundled levels</b> — Mistake, YALA (Slowed) and Take Me (To The Moon), each with a hand-authored chart and three difficulties.
   </div>
 </div>
 <input type="file" id="file" accept="audio/*" hidden>
 <audio id="levelAudio" src="Free_Flow_Flava_-_Mistake_79894259.mp3" preload="auto" hidden></audio>
 <audio id="levelAudioYala" src="QMIIR_-_YALA_Slowed_81306825.mp3" preload="auto" hidden></audio>
+<audio id="levelAudioMoon" src="Ian_Asher_-_Take_Me_To_The_Moon_81645636.mp3" preload="auto" hidden></audio>
 <script>
 'use strict';
 const cv=document.getElementById('c'),cx=cv.getContext('2d');
@@ -1076,10 +1078,12 @@ const menu=document.getElementById('menu'),hud=document.getElementById('hud'),
   resultStars=document.getElementById('resultStars'),resultMeta=document.getElementById('resultMeta'),
   resultBest=document.getElementById('resultBest'),resultContinue=document.getElementById('resultContinue');
 
-const TRACK_MISTAKE_ID='free-flow-flava--mistake',TRACK_YALA_ID='qmiir--yala-slowed';
+const TRACK_MISTAKE_ID='free-flow-flava--mistake',TRACK_YALA_ID='qmiir--yala-slowed',
+  TRACK_MOON_ID='ian-asher--take-me-to-the-moon';
 const LEVEL_RECORDS=[
   {trackId:TRACK_MISTAKE_ID,name:'MISTAKE',el:document.getElementById('levelRecordMistake')},
-  {trackId:TRACK_YALA_ID,name:'YALA SLOWED',el:document.getElementById('levelRecordYala')}
+  {trackId:TRACK_YALA_ID,name:'YALA SLOWED',el:document.getElementById('levelRecordYala')},
+  {trackId:TRACK_MOON_ID,name:'TAKE ME TO THE MOON',el:document.getElementById('levelRecordMoon')}
 ];
 let resultScoreAnim=0,resultStarTimers=[];
 function levelResultKey(trackId,diff){return `beat-slicer:result:v1:${trackId}:${diff}`;}
@@ -1512,9 +1516,119 @@ function buildYalaChart(diff='hard'){
   return{notes:chart,light};
 }
 
+// ---------- уровень «Take Me (To The Moon)» (Ian Asher / D a n n y, 87.488 BPM) ----------
+// Офлайн-анализ: уверенная сетка от 0.1847 с; три главных входа энергии —
+// такты 9 (24.88 с), 25 (68.77 с) и 49 (134.60 с).
+const LEVEL_MOON={id:TRACK_MOON_ID,title:'Ian Asher — Take Me (To The Moon)',dur:158.667755,
+  iv:.6858052,off:.1847,silenceAt:158.667755,minEndSilence:2,
+  activeRanges:[[9,15],[25,32],[49,56]],buildBars:[8,24,47,48]};
+const MOON_ANCHORS=new Set([
+  '0:3','8:3.5','9:0','9:1.25','9:1.5','9:2.5','9:3.25','9:3.5',
+  '10:0','10:2.5','10:3.5','10:3.75','11:1.25','11:1.5','11:2','11:3.25',
+  '12:0','12:0.5','12:1','12:1.25','12:1.5','12:2','12:2.5','12:3.75',
+  '15:1.5','16:0','16:1','16:2.75','17:0','19:2',
+  '24:3.5','25:0','25:1.5','25:3.5','28:0','29:0','30:0','31:2','32:0',
+  '33:0','39:0','45:0','47:3.5','48:3.5','49:0','49:1.5','49:3.5',
+  '32:3','52:0','53:0','54:0','55:2','56:0','56:0.25','56:3'
+]);
+function buildMoonChart(diff='hard'){
+  const IV=LEVEL_MOON.iv,OFF=LEVEL_MOON.off,T=(bar,q)=>OFF+(bar*4+q)*IV;
+  const notes=[],light=[];
+  const orb=(bar,q,side,lvl=3)=>notes.push({t:T(bar,q),orbs:1,bomb:false,lvl,side,bar,q});
+  const dbl=(bar,q,lvl=3)=>notes.push({t:T(bar,q),orbs:2,bomb:false,lvl,bar,q});
+  const bomb=(bar,q)=>notes.push({t:T(bar,q),orbs:0,bomb:true,lvl:3,bar,q});
+  const alt=(bar,q)=>(bar+Math.floor(q))%2;
+
+  // Интро 0–7: ровные половинные опоры; восьмой такт собирает первый дроп.
+  for(let b=0;b<=7;b++){orb(b,0,alt(b,0),1);orb(b,2,alt(b,2),1);}
+  orb(0,3,undefined,1);
+  orb(7,3.5,undefined,2);
+  for(let q=0;q<4;q++)orb(8,q,alt(8,q),2);orb(8,3.5,undefined,2);
+
+  // Дроп A 9–15: четверти остаются метрономом, восьмые повторяют реальные вокальные атаки.
+  for(let b=9;b<=15;b++){
+    for(let q=0;q<4;q++){
+      if(b===11&&q===3){bomb(b,q);continue;}if(b===14&&q===1){bomb(b,q);continue;}
+      if(q===0&&(b===9||b===12))dbl(b,q);else orb(b,q,alt(b,q));
+    }
+    if(b===9||b===11||b===12||b===15)orb(b,1.5,undefined);
+    if(b===9||b===10||b===15)orb(b,3.5,undefined);
+    if(b===9||b===10||b===12)orb(b,2.5,undefined);
+  }
+  [[9,1.25],[9,3.25],[10,3.75],[11,1.25],[11,3.25],[12,.5],[12,1.25],[12,3.75]]
+    .forEach(([b,q])=>orb(b,q,undefined));
+
+  // Куплет/брейк 16–23: меньше целей, но характерные ответы голоса защищены anchors.
+  for(let b=16;b<=23;b++){orb(b,0,alt(b,0),1);orb(b,2,alt(b,2),1);}
+  orb(16,1,undefined,1);orb(16,2.75,undefined,1);orb(17,3.5,undefined,1);orb(19,2.5,undefined,1);orb(23,3.5,undefined,2);
+  for(let q=0;q<4;q++)orb(24,q,alt(24,q),2);orb(24,3.5,undefined,2);
+
+  // Дроп B 25–32: длиннее и плотнее первого, с ответами на слабых восьмых.
+  for(let b=25;b<=32;b++){
+    for(let q=0;q<4;q++){
+      if(b===27&&q===3){bomb(b,q);continue;}if(b===31&&q===1){bomb(b,q);continue;}
+      if(q===0&&(b===25||b===29))dbl(b,q);else orb(b,q,alt(b,q));
+    }
+    if(b%2===1)orb(b,1.5,undefined);else orb(b,2.5,undefined);
+    if(b===25||b===28||b===31)orb(b,3.5,undefined);
+  }
+
+  // Средняя часть 33–44: спокойная двухдольная сетка и редкие синкопы фразы.
+  for(let b=33;b<=44;b++){orb(b,0,alt(b,0),1);orb(b,2,alt(b,2),1);}
+  [[35,3.5],[39,1.5],[43,3.5],[44,3]].forEach(([b,q])=>orb(b,q,undefined,1));
+
+  // Билдап 45–48 последовательно наращивает плотность, не меняя скорости полёта.
+  for(let q of[0,2])orb(45,q,alt(45,q),2);
+  for(let q of[0,1,2,3])orb(46,q,alt(46,q),2);
+  for(let q of[0,1,2,3])orb(47,q,alt(47,q),2);orb(47,3.5,undefined,2);
+  for(let q of[0,.5,1,1.5,2,2.5,3,3.5])orb(48,q,alt(48,q),2);
+
+  // Финальный дроп 49–56 — кульминация: плотная сетка, но максимум две обычные цели одновременно.
+  for(let b=49;b<=56;b++){
+    for(let q=0;q<4;q++){
+      if(b===51&&q===3){bomb(b,q);continue;}if(b===55&&q===1){bomb(b,q);continue;}
+      if(q===0&&(b===49||b===52||b===56))dbl(b,q);else orb(b,q,alt(b,q));
+    }
+    if(b%2===1)orb(b,1.5,undefined);else orb(b,2.5,undefined);
+    if(b===49||b===52||b===55)orb(b,3.5,undefined);
+  }
+  orb(56,.25,undefined);
+
+  for(let b=0;b<=56;b++)for(let q=0;q<4;q++){
+    const active=LEVEL_MOON.activeRanges.some(([a,z])=>b>=a&&b<=z),build=LEVEL_MOON.buildBars.includes(b);
+    light.push({t:T(b,q),k:active?(q===0?1.6:.9):(build?.9:.5)});
+  }
+
+  notes.sort((a,b)=>a.t-b.t);
+  const mediumBombs=new Set(['11:3','27:3','51:3','55:1']),lightBombs=new Set(['27:3','55:1']);
+  const keep=n=>{
+    const key=`${n.bar}:${n.q}`;
+    if(diff==='hard'||MOON_ANCHORS.has(key)||
+      n.bomb&&(diff==='norm'&&mediumBombs.has(key)||diff==='easy'&&lightBombs.has(key)))return true;
+    if(n.bar<8||n.bar>=16&&n.bar<=23||n.bar>=33&&n.bar<=45)return n.q===0||n.q===2;
+    if(diff==='norm')return n.q===0||n.q===2||(n.bar%2===0?n.q===1:n.q===3);
+    return n.q===0||n.q===2;
+  };
+  const filtered=notes.filter(keep).map(n=>{
+    const key=`${n.bar}:${n.q}`;
+    const keepBomb=diff==='hard'||diff==='norm'&&mediumBombs.has(key)||diff==='easy'&&lightBombs.has(key);
+    if(n.bomb&&!keepBomb)return{...n,bomb:false,orbs:1,side:alt(n.bar,n.q)};
+    if(n.orbs===2&&diff!=='hard'&&(diff==='easy'||n.bar%8!==0))return{...n,orbs:1,side:alt(n.bar,n.q)};
+    return n;
+  });
+  // Три редких сюжетных удара: первый вход, центральный пик и финальная кульминация.
+  const rushes=new Map([['9:0',3],['25:0',4],['49:0',4]]);
+  const chart=filtered.map(n=>{
+    const ult=rushes.get(`${n.bar}:${n.q}`);return ult?{...n,bomb:false,orbs:ult,ult}:n;
+  });
+  return{notes:chart,light};
+}
+
 const bLevel=document.getElementById('bLevel'),levelAudio=document.getElementById('levelAudio'),
-  bLevelYala=document.getElementById('bLevelYala'),levelAudioYala=document.getElementById('levelAudioYala');
-const LEVEL_BTN='★ Free Flow Flava — Mistake',LEVEL_YALA_BTN='★ QMIIR — YALA (Slowed)';
+  bLevelYala=document.getElementById('bLevelYala'),levelAudioYala=document.getElementById('levelAudioYala'),
+  bLevelMoon=document.getElementById('bLevelMoon'),levelAudioMoon=document.getElementById('levelAudioMoon');
+const LEVEL_BTN='★ Free Flow Flava — Mistake',LEVEL_YALA_BTN='★ QMIIR — YALA (Slowed)',
+  LEVEL_MOON_BTN='★ Ian Asher — Take Me (To The Moon)';
 async function startBundledLevel(config,buildChart,audio,button,buttonLabel){
   ensureAC();
   button.textContent='Loading…';button.disabled=true;
@@ -1552,6 +1666,7 @@ async function startBundledLevel(config,buildChart,audio,button,buttonLabel){
 }
 bLevel.onclick=()=>startBundledLevel(LEVEL_MISTAKE,buildMistakeChart,levelAudio,bLevel,LEVEL_BTN);
 bLevelYala.onclick=()=>startBundledLevel(LEVEL_YALA,buildYalaChart,levelAudioYala,bLevelYala,LEVEL_YALA_BTN);
+bLevelMoon.onclick=()=>startBundledLevel(LEVEL_MOON,buildMoonChart,levelAudioMoon,bLevelMoon,LEVEL_MOON_BTN);
 renderLevelRecords();
 </script>
 </body>

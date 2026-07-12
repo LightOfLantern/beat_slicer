@@ -22,6 +22,7 @@ SOURCE_HTML = ROOT / "mobile" / "beat_slicer_mobile.source.html"
 TRACKS = (
     ROOT / "Free_Flow_Flava_-_Mistake_79894259.mp3",
     ROOT / "QMIIR_-_YALA_Slowed_81306825.mp3",
+    ROOT / "Ian_Asher_-_Take_Me_To_The_Moon_81645636.mp3",
 )
 
 
@@ -86,7 +87,7 @@ def main() -> None:
     run(
         TOOLS / "aapt2", "link", "-o", unsigned, "-I", PLATFORM,
         "--manifest", ANDROID / "AndroidManifest.xml", "--min-sdk-version", "24",
-        "--target-sdk-version", "35", "--version-code", "1", "--version-name", "1.0",
+        "--target-sdk-version", "35", "--version-code", "2", "--version-name", "1.1",
         "-A", assets, compiled,
     )
     run(
