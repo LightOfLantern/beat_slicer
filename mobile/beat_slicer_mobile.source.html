@@ -1416,6 +1416,36 @@ bTab.onclick=async()=>{
   }catch(err){if(err.name!=='NotAllowedError')alert('Capture failed: '+err.message);}
 };
 
+// Финальный UX-проход поверх музыкальной карты. Сложность растёт частотой
+// последовательных ударов, а не пачкой шаров в одной точке времени.
+function shapeRhythmFlow(notes,light,diff,{introBars=0}={}){
+  let out=notes.map(n=>({...n}));
+  if(introBars){
+    out=out.filter(n=>{
+      if(n.bar>=introBars)return true;
+      const firstHalf=n.bar<introBars/2;
+      if(firstHalf)return n.q===0&&(diff!=='easy'||n.bar%2===0);
+      return n.q===0||(diff!=='easy'&&n.q===2);
+    }).map(n=>n.bar<introBars?{...n,bomb:false,orbs:1,ult:undefined}:n);
+  }
+  out=out.map(n=>!n.ult&&n.orbs>1?{...n,orbs:1,side:(n.bar+Math.floor(n.q))%2}:n);
+  const rushes=out.filter(n=>n.ult);
+  if(rushes.length)out=out.filter(n=>!rushes.some(r=>{
+    if(n===r)return false;
+    const delta=(n.bar*4+n.q)-(r.bar*4+r.q);
+    return delta>-1.5&&delta<=2;
+  }));
+  const spaced=[];
+  for(const n of out){
+    const pos=n.bar*4+n.q,last=spaced[spaced.length-1];
+    if(!n.ult&&last&&!last.ult&&pos-(last.bar*4+last.q)<.5-1e-6)continue;
+    spaced.push(n);
+  }
+  out=spaced;
+  out.sort((a,b)=>a.t-b.t);
+  return{notes:out,light};
+}
+
 // ---------- уровень «Mistake» (Free Flow Flava, 110 BPM) ----------
 // Карта собрана вручную по офлайн-декомпозиции трека (ffmpeg → onset flux →
 // автокорреляция темпа → сетка). BPM 110.022, сетка от 0.0145 с, ошибка <15 мс:
@@ -1581,7 +1611,7 @@ function buildMistakeChart(diff='hard'){
     const ult=rushes.get(`${n.bar}:${n.q}`);
     return ult?{...n,bomb:false,orbs:ult,ult}:n;
   });
-  return{notes:chart,light};
+  return shapeRhythmFlow(chart,light,diff,{introBars:7});
 }
 
 // ---------- уровень «YALA (Slowed)» (QMIIR / DJ Zarek / Irokz, 84.086 BPM) ----------
@@ -1683,11 +1713,11 @@ function buildYalaChart(diff='hard'){
     if(n.orbs===2&&diff!=='hard'&&(diff==='easy'||n.bar%8!==0))return{...n,orbs:1,side:alt(n.bar,n.q)};
     return n;
   });
-  const rushes=new Map([['4:0',3],['21:0',4],['37:0',4]]);
+  const rushes=new Map([['16:0',3],['37:0',4],['49:0',4]]);
   const chart=filtered.map(n=>{
     const ult=rushes.get(`${n.bar}:${n.q}`);return ult?{...n,bomb:false,orbs:ult,ult}:n;
   });
-  return{notes:chart,light};
+  return shapeRhythmFlow(chart,light,diff,{introBars:8});
 }
 
 // ---------- уровень «Take Me (To The Moon)» (Ian Asher / D a n n y, 87.488 BPM) ----------
@@ -1795,7 +1825,7 @@ function buildMoonChart(diff='hard'){
   const chart=filtered.map(n=>{
     const ult=rushes.get(`${n.bar}:${n.q}`);return ult?{...n,bomb:false,orbs:ult,ult}:n;
   });
-  return{notes:chart,light};
+  return shapeRhythmFlow(chart,light,diff,{introBars:8});
 }
 
 // ---------- уровень «Adieu (RMX)» (Rammstein / Andrea Marino, 125.007 BPM) ----------
@@ -1909,30 +1939,35 @@ function buildAdieuChart(diff='hard'){
     if(n.orbs===2&&diff!=='hard'&&(diff==='easy'||n.bar%16!==0))return{...n,orbs:1,side:alt(n.bar,n.q)};
     return n;
   });
-  const rushes=new Map([['2:0',3],['65:0',4],['105:0',4]]);
+  const rushes=new Map([['16:0',3],['65:0',4],['105:0',4]]);
   const chart=filtered.map(n=>{
     const ult=rushes.get(`${n.bar}:${n.q}`);return ult?{...n,bomb:false,orbs:ult,ult}:n;
   });
-  return{notes:chart,light};
+  return shapeRhythmFlow(chart,light,diff,{introBars:8});
 }
 
 // Общий финализатор новых сюжетных карт: Hard хранит полный рисунок, Medium/Light
 // прореживают его только по музыкальной сетке. Защищённые пики и три Rush сохраняются.
-function finishStoryChart(notes,light,diff,anchors,activeRanges,buildBars,mediumBombs,lightBombs,rushes){
+function finishStoryChart(notes,light,diff,anchors,activeRanges,buildBars,mediumBombs,lightBombs,rushes,profile={}){
   notes.sort((a,b)=>a.t-b.t);
   const keep=n=>{
     const key=`${n.bar}:${n.q}`;
     const anchored=anchors.has(key)||anchors.has(key.replace(':0.',':.'));
+    if(n.bar<(profile.introBars||0)){
+      const firstHalf=n.bar<profile.introBars/2;
+      return firstHalf?n.q===0&&(diff!=='easy'||n.bar%2===0):n.q===0||(diff!=='easy'&&n.q===2);
+    }
     if(diff==='hard'||anchored||
       n.bomb&&(diff==='norm'&&mediumBombs.has(key)||diff==='easy'&&lightBombs.has(key)))return true;
     const active=activeRanges.some(([a,z])=>n.bar>=a&&n.bar<=z),build=buildBars.includes(n.bar);
     if(!active&&!build)return n.q===0||n.q===2;
+    if(diff==='norm'&&profile.mediumFullRanges?.some(([a,z])=>n.bar>=a&&n.bar<=z))return Number.isInteger(n.q);
     if(diff==='norm')return n.q===0||n.q===2||(n.bar%2===0?n.q===1:n.q===3);
     return n.q===0||n.q===2;
   };
   const filtered=notes.filter(keep).map(n=>{
     const key=`${n.bar}:${n.q}`;
-    const keepBomb=diff==='hard'||diff==='norm'&&mediumBombs.has(key)||diff==='easy'&&lightBombs.has(key);
+    const keepBomb=n.bar>=(profile.introBars||0)&&(diff==='hard'||diff==='norm'&&mediumBombs.has(key)||diff==='easy'&&lightBombs.has(key));
     if(n.bomb&&!keepBomb)return{...n,bomb:false,orbs:1,side:(n.bar+Math.floor(n.q))%2};
     if(n.orbs===2&&diff!=='hard'&&(diff==='easy'||n.bar%12!==0))return{...n,orbs:1,side:(n.bar+Math.floor(n.q))%2};
     return n;
@@ -1940,7 +1975,7 @@ function finishStoryChart(notes,light,diff,anchors,activeRanges,buildBars,medium
   const chart=filtered.map(n=>{
     const ult=rushes.get(`${n.bar}:${n.q}`);return ult?{...n,bomb:false,orbs:ult,ult}:n;
   });
-  return{notes:chart,light};
+  return shapeRhythmFlow(chart,light,diff,profile);
 }
 
 // ---------- уровень «Stay (Deluxe Edition)» (DJ Major, 96.994 BPM) ----------
@@ -1998,18 +2033,16 @@ function buildStayChart(diff='hard'){
   const mediumBombs=new Set(['6:3','7:1','10:3','12:3','18:3','21:1','29:1','30:3','34:1','38:1','39:1','44:2','48:1','55:3','61:1','63:3','68:3','70:1','78:1','80:3','83:1','85:3','87:1']);
   const lightBombs=new Set(['7:1','12:3','21:1','34:1','44:2','48:1','63:3','68:3','78:1','80:3','83:1','87:1']);
   return finishStoryChart(notes,light,diff,STAY_ANCHORS,LEVEL_STAY.activeRanges,LEVEL_STAY.buildBars,
-    mediumBombs,lightBombs,new Map([['7:0',3],['37:0',4],['76:0',4]]));
+    mediumBombs,lightBombs,new Map([['20:0',3],['37:0',4],['76:0',4]]),{introBars:8});
 }
 
 // ---------- уровень «Cyberpunk» (Qasus, 120.059 BPM) ----------
 const LEVEL_CYBERPUNK={id:TRACK_CYBERPUNK_ID,title:'Qasus — Cyberpunk',dur:166.71665,
   iv:.4997536,off:1.5965,silenceAt:164.356553,minEndSilence:2,
-  activeRanges:[[0,19],[44,67],[76,79]],buildBars:[14,43,58,75]};
+  activeRanges:[[14,19],[44,67],[75,79]],buildBars:[12,13,14,43,58,75]};
 const CYBERPUNK_ANCHORS=new Set([
-  '51:3.25','78:.25','77:3.25','47:1','77:.75','76:1.75','0:2.5','77:1.75','77:.25','1:1.5',
-  '2:.5','4:.5','78:.75','5:2.25','3:.25','76:1','2:.25','9:3.5','1:.5','1:2.25',
-  '0:3.5','1:1.25','2:3.75','0:3.75','77:3','20:2.25','1:3.75','57:.75','75:3','20:1.5',
-  '79:1','3:2.75','76:3.75','78:3','78:2','76:3.25','62:2','2:1.25'
+  '9:3.5','15:0','19:3.5','20:1.5','20:2.25','47:1','51:3.25','57:.75',
+  '59:0','62:2','65:3.5','75:3','76:1.5','77:3','78:2','79:1'
 ]);
 function buildCyberpunkChart(diff='hard'){
   const T=(bar,q)=>LEVEL_CYBERPUNK.off+(bar*4+q)*LEVEL_CYBERPUNK.iv,notes=[],light=[];
@@ -2024,17 +2057,21 @@ function buildCyberpunkChart(diff='hard'){
   ]);
   const hit=(b,q,lvl=3)=>bombAt.has(`${b}:${q}`)?bomb(b,q):orb(b,q,alt(b,q),lvl);
 
-  for(let b=0;b<=5;b++)for(let q=0;q<4;q++)q===0&&(b===0||b===2)?dbl(b,q,2):hit(b,q,2);
-  for(let b=6;b<=19;b++){
-    for(let q=0;q<4;q++)q===0&&(b===6||b===15)?dbl(b,q):hit(b,q);
-    if(b%3===0)orb(b,2.5,undefined);if(b===9||b===19)orb(b,3.5,undefined);
+  for(let b=0;b<=7;b++)for(let q=0;q<4;q++)hit(b,q,1);
+  for(let b=8;b<=13;b++){
+    for(let q=0;q<4;q++)hit(b,q,2);
+    if(b===12||b===13)orb(b,2.5,undefined,2);
+  }
+  for(let b=14;b<=19;b++){
+    for(let q=0;q<4;q++)hit(b,q);
+    if(b%2===0)orb(b,2.5,undefined);if(b===19)orb(b,3.5,undefined);
   }
   for(let b=20;b<=43;b++){
     hit(b,0,1);hit(b,2,1);if(b%4===0)hit(b,3,1);if(b===31||b===36)orb(b,1,undefined,2);
   }
   for(let b=44;b<=67;b++){
-    for(let q=0;q<4;q++)q===0&&(b===44||b===47||b===59)?dbl(b,q):hit(b,q);
-    if(b%3===2)orb(b,1.5,undefined);if(b===57||b===65)orb(b,3.5,undefined);
+    for(let q=0;q<4;q++)hit(b,q);
+    if(b%2===0)orb(b,2.5,undefined);if(b===57||b===65)orb(b,3.5,undefined);
   }
   for(let b=68;b<=75;b++){orb(b,0,alt(b,0),1);orb(b,2,alt(b,2),1);if(b===75)for(const q of[1,3,3.5])orb(b,q,alt(b,q),2);}
   for(let b=76;b<=79;b++){
@@ -2049,10 +2086,11 @@ function buildCyberpunkChart(diff='hard'){
     const active=LEVEL_CYBERPUNK.activeRanges.some(([a,z])=>b>=a&&b<=z),build=LEVEL_CYBERPUNK.buildBars.includes(b);
     light.push({t:T(b,q),k:active?(q===0?1.65:.92):(build?(q===0?1.25:.74):.45)});
   }
-  const mediumBombs=new Set(['3:1','5:1','6:1','8:3','10:1','12:3','14:1','17:1','18:1','22:3','24:3','28:3','32:3','34:3','40:3','45:1','46:3','49:1','50:1','54:1','57:1','58:1','61:1','63:1','66:1','67:1','76:2.5','77:2.5','78:2.5','79:2.5']);
-  const lightBombs=new Set(['5:1','6:1','14:1','22:3','32:3','34:3','45:1','54:1','61:1','67:1','76:2.5','77:2.5','78:2.5','79:2.5']);
+  const mediumBombs=new Set(['10:1','12:3','14:1','17:1','18:1','22:3','24:3','28:3','32:3','34:3','40:3','45:1','46:3','49:1','50:1','54:1','57:1','58:1','61:1','63:1','66:1','67:1']);
+  const lightBombs=new Set(['14:1','22:3','32:3','34:3','45:1','54:1','61:1','67:1']);
   return finishStoryChart(notes,light,diff,CYBERPUNK_ANCHORS,LEVEL_CYBERPUNK.activeRanges,LEVEL_CYBERPUNK.buildBars,
-    mediumBombs,lightBombs,new Map([['2:0',3],['47:0',4],['76:0',4]]));
+    mediumBombs,lightBombs,new Map([['15:0',3],['47:0',4],['76:0',4]]),
+    {introBars:8,mediumFullRanges:[[14,19],[44,67],[75,79]]});
 }
 
 const bLevel=document.getElementById('bLevel'),levelAudio=document.getElementById('levelAudio'),
