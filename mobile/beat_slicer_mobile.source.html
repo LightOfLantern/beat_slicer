@@ -79,6 +79,7 @@
   </div>
   <div class="row">
     <button id="bFile">🎵 Track file</button>
+    <button id="bTab" hidden>🖥 Tab audio</button>
   </div>
   <div class="row">
     <div class="levelChoice"><button id="bLevel">★ Free Flow Flava — Mistake</button><div id="levelRecordMistake" class="levelRecord"></div></div>
@@ -90,6 +91,7 @@
   <div class="hint">
     Orbs launch evenly on the BPM grid at a constant speed. Active sections add half-beats. Slice after the ring appears: cutting too early costs 150 points, a missed orb — 100. Stop the mouse and the game waits with no penalties.<br><br>
     <b>Track file</b> — the most accurate sync (beats are analyzed ahead of time).
+    <span id="tabHint" hidden><br><b>Tab audio</b> — desktop Chrome/Edge: select the music tab and enable tab audio sharing.</span>
     <br><b>Bundled levels</b> — four hand-authored tracks, each with three difficulties and its own records.
   </div>
 </div>
@@ -100,6 +102,15 @@
 <audio id="levelAudioAdieu" src="Rammstein_Andrea_Marino_-_Adieu_-_RMX_by_Andrea_Marino_76187476.mp3" preload="none" playsinline hidden></audio>
 <script>
 'use strict';
+// В редактируемом source-файле MP3 лежат на уровень выше папки mobile.
+// Pages копирует этот HTML в корень, а standalone заменяет src на data URI,
+// поэтому корректируем путь только когда открыт именно файл из /mobile/.
+if(/\/mobile\/[^/]+\.html$/i.test(location.pathname)){
+  for(const audio of document.querySelectorAll('audio[src]')){
+    const src=audio.getAttribute('src')||'';
+    if(src&&!src.includes('/')&&!src.startsWith('data:'))audio.setAttribute('src','../'+src);
+  }
+}
 const cv=document.getElementById('c'),cx=cv.getContext('2d');
 let W=0,H=0;
 const MOBILE_DPR=Math.min(1.6,window.devicePixelRatio||1),MOBILE_TOUCH=matchMedia('(pointer:coarse)').matches;
@@ -1134,6 +1145,7 @@ const menu=document.getElementById('menu'),hud=document.getElementById('hud'),
   scoreEl=document.getElementById('score'),
   stopBtn=document.getElementById('stop'),fileInp=document.getElementById('file'),
   resEl=document.getElementById('res'),bFile=document.getElementById('bFile'),
+  bTab=document.getElementById('bTab'),tabHint=document.getElementById('tabHint'),
   resultOverlay=document.getElementById('resultOverlay'),resultScore=document.getElementById('resultScore'),
   resultStars=document.getElementById('resultStars'),resultMeta=document.getElementById('resultMeta'),
   resultBest=document.getElementById('resultBest'),resultContinue=document.getElementById('resultContinue');
@@ -1281,6 +1293,28 @@ fileInp.onchange=async e=>{
     addText(W/2,H*.42,`≈${Math.round(60/an.iv)} BPM`,'#00e5ff',30);
   }catch(err){alert('Failed: '+err.message);}
   bFile.textContent='🎵 Track file';bFile.disabled=false;fileInp.value='';
+};
+
+const tabCaptureAvailable=!MOBILE_TOUCH&&typeof navigator.mediaDevices?.getDisplayMedia==='function';
+bTab.hidden=!tabCaptureAvailable;tabHint.hidden=!tabCaptureAvailable;
+bTab.onclick=async()=>{
+  ensureAC();
+  try{
+    const st=await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
+    st.getVideoTracks().forEach(t=>t.stop());
+    if(!st.getAudioTracks().length){
+      st.getTracks().forEach(t=>t.stop());
+      alert('No audio shared. Pick a TAB (not a window) and enable tab audio sharing.');
+      return;
+    }
+    G.stream=st;
+    G.srcNode=AC.createMediaStreamSource(st);
+    G.srcNode.connect(analyser); // звук остаётся в исходной вкладке; игра только анализирует его
+    const reportedLatency=Number(st.getAudioTracks()[0].getSettings?.().latency)||0;
+    G.liveOffset=reportedLatency>0?-Math.min(.18,reportedLatency):Number(localStorage.getItem('bs_tab_offset'))||0;
+    st.getAudioTracks()[0].onended=()=>{if(G.running)stopGame(true);};
+    startRun('tab');
+  }catch(err){if(err.name!=='NotAllowedError')alert('Capture failed: '+err.message);}
 };
 
 // ---------- уровень «Mistake» (Free Flow Flava, 110 BPM) ----------
