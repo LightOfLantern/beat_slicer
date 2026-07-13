@@ -33,6 +33,8 @@ jobs:
           cp QMIIR_-_YALA_Slowed_81306825.mp3 _site/
           cp Ian_Asher_-_Take_Me_To_The_Moon_81645636.mp3 _site/
           cp Rammstein_Andrea_Marino_-_Adieu_-_RMX_by_Andrea_Marino_76187476.mp3 _site/
+          cp DJ_Major_-_Stay_Deluxe_Edition_79729726.mp3 _site/
+          cp Qasus_-_Cyberpunk_79935030.mp3 _site/
           cp dist/BeatSlicer-android.apk _site/BeatSlicer-android.apk
       - uses: actions/configure-pages@v5
         with:

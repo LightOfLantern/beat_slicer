@@ -24,6 +24,8 @@ TRACKS = (
     ROOT / "QMIIR_-_YALA_Slowed_81306825.mp3",
     ROOT / "Ian_Asher_-_Take_Me_To_The_Moon_81645636.mp3",
     ROOT / "Rammstein_Andrea_Marino_-_Adieu_-_RMX_by_Andrea_Marino_76187476.mp3",
+    ROOT / "DJ_Major_-_Stay_Deluxe_Edition_79729726.mp3",
+    ROOT / "Qasus_-_Cyberpunk_79935030.mp3",
 )
 
 
@@ -88,7 +90,7 @@ def main() -> None:
     run(
         TOOLS / "aapt2", "link", "-o", unsigned, "-I", PLATFORM,
         "--manifest", ANDROID / "AndroidManifest.xml", "--min-sdk-version", "24",
-        "--target-sdk-version", "35", "--version-code", "5", "--version-name", "1.3.1",
+        "--target-sdk-version", "35", "--version-code", "6", "--version-name", "1.4.0",
         "-A", assets, compiled,
     )
     run(
