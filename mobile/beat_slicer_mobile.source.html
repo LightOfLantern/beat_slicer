@@ -84,18 +84,20 @@
     <div class="levelChoice"><button id="bLevel">★ Free Flow Flava — Mistake</button><div id="levelRecordMistake" class="levelRecord"></div></div>
     <div class="levelChoice"><button id="bLevelYala">★ QMIIR — YALA (Slowed)</button><div id="levelRecordYala" class="levelRecord"></div></div>
     <div class="levelChoice"><button id="bLevelMoon">★ Ian Asher — Take Me (To The Moon)</button><div id="levelRecordMoon" class="levelRecord"></div></div>
+    <div class="levelChoice"><button id="bLevelAdieu">★ Rammstein / Andrea Marino — Adieu (RMX)</button><div id="levelRecordAdieu" class="levelRecord"></div></div>
   </div>
   <div class="row"><button id="bStart" disabled>SELECT A TRACK</button></div>
   <div class="hint">
     Orbs launch evenly on the BPM grid at a constant speed. Active sections add half-beats. Slice after the ring appears: cutting too early costs 150 points, a missed orb — 100. Stop the mouse and the game waits with no penalties.<br><br>
     <b>Track file</b> — the most accurate sync (beats are analyzed ahead of time).
-    <br><b>Bundled levels</b> — Mistake, YALA (Slowed) and Take Me (To The Moon), each with a hand-authored chart and three difficulties.
+    <br><b>Bundled levels</b> — four hand-authored tracks, each with three difficulties and its own records.
   </div>
 </div>
 <input type="file" id="file" accept="audio/*" hidden>
 <audio id="levelAudio" src="Free_Flow_Flava_-_Mistake_79894259.mp3" preload="none" playsinline hidden></audio>
 <audio id="levelAudioYala" src="QMIIR_-_YALA_Slowed_81306825.mp3" preload="none" playsinline hidden></audio>
 <audio id="levelAudioMoon" src="Ian_Asher_-_Take_Me_To_The_Moon_81645636.mp3" preload="none" playsinline hidden></audio>
+<audio id="levelAudioAdieu" src="Rammstein_Andrea_Marino_-_Adieu_-_RMX_by_Andrea_Marino_76187476.mp3" preload="none" playsinline hidden></audio>
 <script>
 'use strict';
 const cv=document.getElementById('c'),cx=cv.getContext('2d');
@@ -1125,11 +1127,12 @@ const menu=document.getElementById('menu'),hud=document.getElementById('hud'),
   resultBest=document.getElementById('resultBest'),resultContinue=document.getElementById('resultContinue');
 
 const TRACK_MISTAKE_ID='free-flow-flava--mistake',TRACK_YALA_ID='qmiir--yala-slowed',
-  TRACK_MOON_ID='ian-asher--take-me-to-the-moon';
+  TRACK_MOON_ID='ian-asher--take-me-to-the-moon',TRACK_ADIEU_ID='rammstein-andrea-marino--adieu-rmx';
 const LEVEL_RECORDS=[
   {trackId:TRACK_MISTAKE_ID,name:'MISTAKE',el:document.getElementById('levelRecordMistake')},
   {trackId:TRACK_YALA_ID,name:'YALA SLOWED',el:document.getElementById('levelRecordYala')},
-  {trackId:TRACK_MOON_ID,name:'TAKE ME TO THE MOON',el:document.getElementById('levelRecordMoon')}
+  {trackId:TRACK_MOON_ID,name:'TAKE ME TO THE MOON',el:document.getElementById('levelRecordMoon')},
+  {trackId:TRACK_ADIEU_ID,name:'ADIEU RMX',el:document.getElementById('levelRecordAdieu')}
 ];
 let resultScoreAnim=0,resultStarTimers=[];
 function levelResultKey(trackId,diff){return `beat-slicer:result:v1:${trackId}:${diff}`;}
@@ -1650,14 +1653,134 @@ function buildMoonChart(diff='hard'){
   return{notes:chart,light};
 }
 
+// ---------- уровень «Adieu (RMX)» (Rammstein / Andrea Marino, 125.007 BPM) ----------
+// Более опасная карта: бомбы образуют повторяемые ответы внутри фраз, а не спавнятся случайно.
+const LEVEL_ADIEU={id:TRACK_ADIEU_ID,title:'Rammstein / Andrea Marino — Adieu (RMX)',dur:245.498776,
+  iv:.479972,off:1.1317,silenceAt:243.598005,minEndSilence:2,
+  activeRanges:[[2,17],[41,56],[65,80],[105,120]],buildBars:[1,40,64,104]};
+const ADIEU_ANCHORS=new Set([
+  '2:0','65:0','105:0','80:2','35:2','76:1','100:2.75','68:1','30:1','26:0',
+  '15:3','31:1','34:0','26:3','66:0','23:1','72:2','34:3','22:1','71:3',
+  '27:2','27:1','40:2.75','79:0','71:1','35:1','75:2','25:1','67:1','31:3',
+  '67:2','22:2','71:0','79:1','75:1','33:1','93:2.5','104:3','73:3','21:1'
+]);
+function buildAdieuChart(diff='hard'){
+  const IV=LEVEL_ADIEU.iv,OFF=LEVEL_ADIEU.off,T=(bar,q)=>OFF+(bar*4+q)*IV;
+  const notes=[],light=[];
+  const orb=(bar,q,side,lvl=3)=>notes.push({t:T(bar,q),orbs:1,bomb:false,lvl,side,bar,q});
+  const dbl=(bar,q,lvl=3)=>notes.push({t:T(bar,q),orbs:2,bomb:false,lvl,bar,q});
+  const bomb=(bar,q)=>notes.push({t:T(bar,q),orbs:0,bomb:true,lvl:3,bar,q});
+  const alt=(bar,q)=>(bar+Math.floor(q))%2;
+  const bombAt=new Set([
+    '5:1','7:3','10:1','12:3','15:1','17:3',
+    '43:1','46:3','49:1','52:3','55:1',
+    '67:3','70:1','73:2.5','76:2.5','79:3',
+    '86:3','90:1',
+    '107:3','110:1','113:3','116:1','119:3'
+  ]);
+  const hit=(b,q,lvl=3)=>bombAt.has(`${b}:${q}`)?bomb(b,q):orb(b,q,alt(b,q),lvl);
+
+  // Короткое интро и мгновенный первый тяжёлый вход.
+  for(let b=0;b<=1;b++){orb(b,0,alt(b,0),1);orb(b,2,alt(b,2),1);}
+  orb(1,3.5,undefined,2);
+  for(let b=2;b<=17;b++){
+    for(let q=0;q<4;q++){
+      if(q===0&&(b===2||b===8||b===16))dbl(b,q);else hit(b,q);
+    }
+    if(b%4===3)orb(b,2.5,undefined);
+    if(b===7||b===15)orb(b,3.5,undefined);
+  }
+
+  // Вокальная середина 18–35: половинный метр плюс пики реальной фразы.
+  for(let b=18;b<=35;b++){orb(b,0,alt(b,0),1);orb(b,2,alt(b,2),1);}
+  [[21,1],[22,1],[23,1],[23,3],[25,1],[26,3],[27,1],[30,1],[31,1],[31,3],[33,1],[34,3],[35,1]]
+    .forEach(([b,q])=>orb(b,q,undefined,1));
+
+  // Разреженный переход 36–40 и шестнадцатая 40:2.75 перед вторым дропом.
+  for(let b=36;b<=39;b++){orb(b,0,alt(b,0),1);orb(b,2,alt(b,2),1);}
+  for(let q of[0,1,2,2.75,3,3.5])orb(40,q,alt(40,q),2);
+
+  // Дроп 41–56: бомба отвечает шару каждые 3–4 такта.
+  for(let b=41;b<=56;b++){
+    for(let q=0;q<4;q++){
+      if(q===0&&(b===41||b===48||b===56))dbl(b,q);else hit(b,q);
+    }
+    if(b%4===2)orb(b,2.5,undefined);
+  }
+
+  // Воздух 57–64, затем главный удар трека на 125.92 с.
+  for(let b=57;b<=63;b++){orb(b,0,alt(b,0),1);orb(b,2,alt(b,2),1);}
+  for(let q of[0,1,2,3,3.5])orb(64,q,alt(64,q),2);
+  for(let b=65;b<=80;b++){
+    for(let q=0;q<4;q++){
+      if(q===0&&(b===65||b===72||b===80))dbl(b,q);else hit(b,q);
+    }
+    if(b%4===1)orb(b,1.5,undefined);
+    if(b===73||b===76)bomb(b,2.5);
+  }
+
+  // Длинный тёмный брейк 81–102: бомбы редки и читаются на пустом поле.
+  for(let b=81;b<=102;b++){
+    orb(b,0,alt(b,0),1);orb(b,2,alt(b,2),1);
+    if(b===86)bomb(86,3);if(b===90)bomb(90,1);
+  }
+  orb(93,2.5,undefined,1);orb(100,2.75,undefined,1);
+
+  // Такт 103 почти пуст; 104 собирает финальную атаку.
+  orb(104,0,0,2);orb(104,1,1,2);orb(104,2,0,2);orb(104,3,1,2);orb(104,3.5,undefined,2);
+  for(let b=105;b<=120;b++){
+    for(let q=0;q<4;q++){
+      if(q===0&&(b===105||b===112||b===120))dbl(b,q);else hit(b,q);
+    }
+    if(b%4===2)orb(b,2.5,undefined);
+    if(b===110||b===118)orb(b,3.5,undefined);
+  }
+
+  // Fade остаётся игровым до 240.16 с, дальше ждём две секунды фактической тишины.
+  for(let b=121;b<=123;b++){orb(b,0,alt(b,0),1);orb(b,2,alt(b,2),1);}
+  orb(124,0,0,1);dbl(124,2,1);
+
+  for(let b=0;b<=124;b++)for(let q=0;q<4;q++){
+    const active=LEVEL_ADIEU.activeRanges.some(([a,z])=>b>=a&&b<=z),build=LEVEL_ADIEU.buildBars.includes(b);
+    light.push({t:T(b,q),k:active?(q===0?1.6:.9):(build?.9:.5)});
+  }
+
+  notes.sort((a,b)=>a.t-b.t);
+  const mediumBombs=new Set(['5:1','10:1','15:1','43:1','49:1','55:1','67:3','73:2.5','79:3','90:1','107:3','110:1','116:1','119:3']);
+  const lightBombs=new Set(['10:1','15:1','49:1','55:1','73:2.5','79:3','110:1','119:3']);
+  const keep=n=>{
+    const key=`${n.bar}:${n.q}`;
+    if(diff==='hard'||ADIEU_ANCHORS.has(key)||
+      n.bomb&&(diff==='norm'&&mediumBombs.has(key)||diff==='easy'&&lightBombs.has(key)))return true;
+    const active=LEVEL_ADIEU.activeRanges.some(([a,z])=>n.bar>=a&&n.bar<=z),build=LEVEL_ADIEU.buildBars.includes(n.bar);
+    if(!active&&!build)return n.q===0||n.q===2;
+    if(diff==='norm')return n.q===0||n.q===2||(n.bar%2===0?n.q===1:n.q===3);
+    return n.q===0||n.q===2;
+  };
+  const filtered=notes.filter(keep).map(n=>{
+    const key=`${n.bar}:${n.q}`;
+    const keepBomb=diff==='hard'||diff==='norm'&&mediumBombs.has(key)||diff==='easy'&&lightBombs.has(key);
+    if(n.bomb&&!keepBomb)return{...n,bomb:false,orbs:1,side:alt(n.bar,n.q)};
+    if(n.orbs===2&&diff!=='hard'&&(diff==='easy'||n.bar%16!==0))return{...n,orbs:1,side:alt(n.bar,n.q)};
+    return n;
+  });
+  const rushes=new Map([['2:0',3],['65:0',4],['105:0',4]]);
+  const chart=filtered.map(n=>{
+    const ult=rushes.get(`${n.bar}:${n.q}`);return ult?{...n,bomb:false,orbs:ult,ult}:n;
+  });
+  return{notes:chart,light};
+}
+
 const bLevel=document.getElementById('bLevel'),levelAudio=document.getElementById('levelAudio'),
   bLevelYala=document.getElementById('bLevelYala'),levelAudioYala=document.getElementById('levelAudioYala'),
   bLevelMoon=document.getElementById('bLevelMoon'),levelAudioMoon=document.getElementById('levelAudioMoon'),
+  bLevelAdieu=document.getElementById('bLevelAdieu'),levelAudioAdieu=document.getElementById('levelAudioAdieu'),
   bStart=document.getElementById('bStart');
 const LEVEL_CHOICES=[
   {config:LEVEL_MISTAKE,buildChart:buildMistakeChart,audio:levelAudio,button:bLevel,label:'MISTAKE'},
   {config:LEVEL_YALA,buildChart:buildYalaChart,audio:levelAudioYala,button:bLevelYala,label:'YALA'},
-  {config:LEVEL_MOON,buildChart:buildMoonChart,audio:levelAudioMoon,button:bLevelMoon,label:'MOON'}
+  {config:LEVEL_MOON,buildChart:buildMoonChart,audio:levelAudioMoon,button:bLevelMoon,label:'MOON'},
+  {config:LEVEL_ADIEU,buildChart:buildAdieuChart,audio:levelAudioAdieu,button:bLevelAdieu,label:'ADIEU'}
 ];
 const levelAudioReady=new WeakMap();
 let selectedLevel=null,selectionToken=0;
@@ -1734,6 +1857,7 @@ async function startBundledLevel(config,buildChart,audio){
 bLevel.onclick=()=>selectLevel(LEVEL_CHOICES[0]);
 bLevelYala.onclick=()=>selectLevel(LEVEL_CHOICES[1]);
 bLevelMoon.onclick=()=>selectLevel(LEVEL_CHOICES[2]);
+bLevelAdieu.onclick=()=>selectLevel(LEVEL_CHOICES[3]);
 bStart.onclick=()=>{if(selectedLevel)startBundledLevel(selectedLevel.config,selectedLevel.buildChart,selectedLevel.audio);};
 renderLevelRecords();
 </script>

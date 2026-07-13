@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Wide translucent rings imitate the canvas orb's yellow neon bloom. -->
+    <path
+        android:pathData="M54,19 A35,35 0,1 1 53.999,89 A35,35 0,1 1 54,19"
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#20FFD75E"
+        android:strokeWidth="10" />
+    <path
+        android:pathData="M54,23 A31,31 0,1 1 53.999,85 A31,31 0,1 1 54,23"
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#55FFCB35"
+        android:strokeWidth="7.5" />
+    <path
+        android:pathData="M54,27.5 A26.5,26.5 0,1 1 53.999,80.5 A26.5,26.5 0,1 1 54,27.5"
+        android:fillColor="#141318"
+        android:strokeColor="#FFFFC928"
+        android:strokeWidth="6" />
+    <path
+        android:pathData="M54,29.5 A24.5,24.5 0,1 1 53.999,78.5 A24.5,24.5 0,1 1 54,29.5"
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#FFFFF1A0"
+        android:strokeWidth="2" />
+</vector>

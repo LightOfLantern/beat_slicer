@@ -25,7 +25,14 @@ jobs:
       - name: Prepare site
         run: |
           mkdir _site
-          cp beat_slicer_mobile.html _site/index.html
+          # Pages serves normal MP3 resources. The standalone HTML keeps the same
+          # tracks embedded for sharing, but forcing browsers to parse a 30 MiB
+          # base64 document made selection unreliable on mobile Safari.
+          cp mobile/beat_slicer_mobile.source.html _site/index.html
+          cp Free_Flow_Flava_-_Mistake_79894259.mp3 _site/
+          cp QMIIR_-_YALA_Slowed_81306825.mp3 _site/
+          cp Ian_Asher_-_Take_Me_To_The_Moon_81645636.mp3 _site/
+          cp Rammstein_Andrea_Marino_-_Adieu_-_RMX_by_Andrea_Marino_76187476.mp3 _site/
           cp dist/BeatSlicer-android.apk _site/BeatSlicer-android.apk
       - uses: actions/configure-pages@v5
         with:
