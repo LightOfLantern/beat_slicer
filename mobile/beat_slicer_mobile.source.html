@@ -759,7 +759,11 @@ function resumeFromPassive(){
   G.lastInput=performance.now()+iv*4000;updateHud();
 }
 cv.addEventListener('pointermove',e=>{
-  if(e.pointerId!==activePointerId)return;
+  // На ПК клинок следует за мышью без зажатой кнопки. Touch/pen по-прежнему
+  // принимают движение только от первого активного pointerId, чтобы два пальца
+  // не соединялись ложным лучом через весь экран.
+  const hoverMouse=e.pointerType==='mouse';
+  if(!hoverMouse&&e.pointerId!==activePointerId)return;
   const p=pointerPoint(e);
   G.lastInput=p.t;if(G.passive)resumeFromPassive();
   G.trail.push(p);
@@ -771,6 +775,11 @@ cv.addEventListener('pointermove',e=>{
   lastP=p;
 });
 cv.addEventListener('pointerdown',e=>{
+  if(e.pointerType==='mouse'){
+    G.lastInput=performance.now();if(G.passive)resumeFromPassive();
+    lastP=pointerPoint(e);lastP.t=G.lastInput;
+    return;
+  }
   if(activePointerId!==null){e.preventDefault();return;}
   activePointerId=e.pointerId;e.preventDefault();
   G.lastInput=performance.now();if(G.passive)resumeFromPassive();
@@ -784,7 +793,10 @@ function releasePointer(e){
 }
 cv.addEventListener('pointerup',releasePointer);
 cv.addEventListener('pointercancel',releasePointer);
-cv.addEventListener('pointerleave',e=>{if(e.pointerId===activePointerId&&!cv.hasPointerCapture?.(e.pointerId))releasePointer(e);});
+cv.addEventListener('pointerleave',e=>{
+  if(e.pointerType==='mouse'){lastP=null;return;}
+  if(e.pointerId===activePointerId&&!cv.hasPointerCapture?.(e.pointerId))releasePointer(e);
+});
 addEventListener('keydown',e=>{if(e.key==='Escape'&&G.running)stopGame(true);});
 
 // ---------- игровой цикл ----------
