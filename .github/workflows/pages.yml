@@ -35,7 +35,7 @@ jobs:
           cp Rammstein_Andrea_Marino_-_Adieu_-_RMX_by_Andrea_Marino_76187476.mp3 _site/
           cp DJ_Major_-_Stay_Deluxe_Edition_79729726.mp3 _site/
           cp Qasus_-_Cyberpunk_79935030.mp3 _site/
-          cp dist/BeatSlicer-android.apk _site/BeatSlicer-android.apk
+          cp Snow_Strippers_-_So_What_If_Im_A_Freak_79918843.mp3 _site/
       - uses: actions/configure-pages@v5
         with:
           enablement: true

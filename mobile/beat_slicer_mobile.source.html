@@ -95,13 +95,14 @@
     <div class="levelChoice"><button id="bLevelAdieu">★ Rammstein / Andrea Marino — Adieu (RMX)</button><div id="levelRecordAdieu" class="levelRecord"></div></div>
     <div class="levelChoice"><button id="bLevelStay">★ DJ Major — Stay (Deluxe Edition)</button><div id="levelRecordStay" class="levelRecord"></div></div>
     <div class="levelChoice"><button id="bLevelCyberpunk">★ Qasus — Cyberpunk</button><div id="levelRecordCyberpunk" class="levelRecord"></div></div>
+    <div class="levelChoice"><button id="bLevelSnow">★ Snow Strippers — So What If I'm A Freak</button><div id="levelRecordSnow" class="levelRecord"></div></div>
   </div>
   <div class="row"><button id="bStart" disabled>SELECT A TRACK</button></div>
   <div class="hint">
     Orbs launch evenly on the BPM grid at a constant speed. Active sections add half-beats. Slice after the ring appears: cutting too early costs 150 points, a missed orb — 100. Stop the mouse and the game waits with no penalties.<br><br>
     <b>Track file</b> — the most accurate sync (beats are analyzed ahead of time).
     <span id="tabHint" hidden><br><b>Tab audio</b> — desktop Chrome/Edge: select the music tab and enable tab audio sharing.</span>
-    <br><b>Bundled levels</b> — six hand-authored tracks, each with three difficulties and its own records.
+    <br><b>Bundled levels</b> — seven hand-authored tracks, each with three difficulties and its own records.
   </div>
 </div>
 <input type="file" id="file" accept="audio/*" hidden>
@@ -111,6 +112,7 @@
 <audio id="levelAudioAdieu" src="Rammstein_Andrea_Marino_-_Adieu_-_RMX_by_Andrea_Marino_76187476.mp3" preload="none" playsinline hidden></audio>
 <audio id="levelAudioStay" src="DJ_Major_-_Stay_Deluxe_Edition_79729726.mp3" preload="none" playsinline hidden></audio>
 <audio id="levelAudioCyberpunk" src="Qasus_-_Cyberpunk_79935030.mp3" preload="none" playsinline hidden></audio>
+<audio id="levelAudioSnow" src="Snow_Strippers_-_So_What_If_Im_A_Freak_79918843.mp3" preload="none" playsinline hidden></audio>
 <script>
 'use strict';
 // В редактируемом source-файле MP3 лежат на уровень выше папки mobile.
@@ -163,7 +165,6 @@ const G={mode:null,running:false,paused:false,diff:'norm',
   notes:[],lightBeats:[],beatIdx:0,lightIdx:0,
   beatIv:.5,travel:1.35,songStart:0,songDur:0,srcNode:null,stream:null,audioEl:null,
   bass:0,bassAvg:0,flash:0,flashRed:0,flashWhite:0,shake:0,hue:210,
-  hitStopUntil:0,hitStopDebt:0,hitStopPainted:false,
   rt:{hist:[],lastDet:0,lastFire:0,nextBeat:0,misses:0,silentFrames:0,runMax:0,intervals:[],interval:.5,
     envBin:null,acIv:0,acConf:0,lastAc:0,phase:[0,0,0,0],phaseShift:0}};
 window.G=G; // отладка
@@ -683,7 +684,7 @@ function levelRating(score,maxScore,diff){
 }
 function katanaImpact(x,y,ang,r,hue,perfect=false,early=false){
   // Короткий локальный импакт вместо расходящихся кругов: лезвие, RGB-afterimage,
-  // два веера искр и осколки. Музыка не останавливается — замирает только кадр игры.
+  // два веера искр и осколки. Эффект полностью визуальный и не тормозит игровой кадр.
   const power=early?.58:(perfect?1.18:1),life=early?.09:.14;
   G.parts.push({x,y,vx:0,vy:0,slash:true,ang,len:r*(early?3.1:4.15),life,max:life,hue:early?345:hue,power});
   G.parts.push({x,y,vx:0,vy:0,impactCore:true,ang,r:r*power,life:.11,max:.11,hue:early?345:hue});
@@ -700,11 +701,6 @@ function katanaImpact(x,y,ang,r,hue,perfect=false,early=false){
     G.parts.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v-45,shard:true,
       rot:Math.random()*7,vr:(Math.random()-.5)*14,size:r*(.1+Math.random()*.16),
       life:.28+Math.random()*.2,max:.48,hue:early?345:hue});
-  }
-  if(G.running&&!G.paused){
-    const ms=early?18:(perfect?52:40);
-    G.hitStopUntil=Math.max(G.hitStopUntil,performance.now()+ms);
-    G.hitStopPainted=false;
   }
   if(!early)G.shake=Math.max(G.shake,perfect?5:3);
 }
@@ -856,12 +852,14 @@ function update(now,dt){
     if(canSchedule(p.hitT))spawnSet(p.hitT,p.count,p.travel,p.step,p.lvl,p.allowBomb);
   }
   if(G.mode==='file'||G.mode==='level'){
-    const st=now-G.songStart;
+    // Для встроенных уровней источник истины — currentTime самого MP3. Это убирает
+    // редкий рассинхрон после долгого mobile buffering (особенно заметный на Stay Hard).
+    const st=G.mode==='level'&&G.audioEl&&!G.audioEl.ended?G.audioEl.currentTime:now-G.songStart;
     while(G.beatIdx<G.notes.length){
       const nt=G.notes[G.beatIdx],travel=nt.travel||G.travel;
       if(nt.t-travel>st)break;
       G.beatIdx++;
-      const hit=G.songStart+nt.t;
+      const hit=G.mode==='level'?now+(nt.t-st):G.songStart+nt.t;
       const minLead=Math.min(.7,Math.max(.45,travel*.55));
       if(hit>now+minLead&&canSchedule(hit))spawnNote(nt,hit);
       else if(hit<=now+minLead&&nt.orbs>0)G.deviceDrops+=nt.ult||nt.orbs;
@@ -1181,13 +1179,7 @@ function loop(ts){
   const frameDt=(ts-lastTs)/1000||.016;lastTs=ts;
   const now=AC?AC.currentTime:0;
   if(AC&&!G.paused)updateAudio(now);
-  if(G.running&&!G.paused&&performance.now()<G.hitStopUntil){
-    if(!G.hitStopPainted){draw(now);G.hitStopPainted=true;}
-    G.hitStopDebt+=frameDt;
-    return; // настоящий hit-stop: удерживаем уже нарисованный кадр, музыка продолжает идти
-  }
-  G.hitStopPainted=false;
-  const dt=Math.min(.085,frameDt+G.hitStopDebt);G.hitStopDebt=0;
+  const dt=Math.min(.05,frameDt);
   if(G.running&&!G.paused){
     if(!MOBILE_TOUCH&&!G.passive&&performance.now()-G.lastInput>2600)enterPassive();
     if(G.listenUntil&&now>=G.listenUntil){G.listenUntil=0;updateHud();}
@@ -1216,14 +1208,16 @@ const menu=document.getElementById('menu'),hud=document.getElementById('hud'),
 
 const TRACK_MISTAKE_ID='free-flow-flava--mistake',TRACK_YALA_ID='qmiir--yala-slowed',
   TRACK_MOON_ID='ian-asher--take-me-to-the-moon',TRACK_ADIEU_ID='rammstein-andrea-marino--adieu-rmx',
-  TRACK_STAY_ID='dj-major--stay-deluxe-edition',TRACK_CYBERPUNK_ID='qasus--cyberpunk';
+  TRACK_STAY_ID='dj-major--stay-deluxe-edition',TRACK_CYBERPUNK_ID='qasus--cyberpunk',
+  TRACK_SNOW_ID='snow-strippers--so-what-if-im-a-freak';
 const LEVEL_RECORDS=[
   {trackId:TRACK_MISTAKE_ID,name:'MISTAKE',el:document.getElementById('levelRecordMistake')},
   {trackId:TRACK_YALA_ID,name:'YALA SLOWED',el:document.getElementById('levelRecordYala')},
   {trackId:TRACK_MOON_ID,name:'TAKE ME TO THE MOON',el:document.getElementById('levelRecordMoon')},
   {trackId:TRACK_ADIEU_ID,name:'ADIEU RMX',el:document.getElementById('levelRecordAdieu')},
   {trackId:TRACK_STAY_ID,name:'STAY DELUXE',el:document.getElementById('levelRecordStay')},
-  {trackId:TRACK_CYBERPUNK_ID,name:'CYBERPUNK',el:document.getElementById('levelRecordCyberpunk')}
+  {trackId:TRACK_CYBERPUNK_ID,name:'CYBERPUNK',el:document.getElementById('levelRecordCyberpunk')},
+  {trackId:TRACK_SNOW_ID,name:"SO WHAT IF I'M A FREAK",el:document.getElementById('levelRecordSnow')}
 ];
 let resultScoreAnim=0,resultStarTimers=[];
 function levelResultKey(trackId,diff){return `beat-slicer:result:v1:${trackId}:${diff}`;}
@@ -1299,7 +1293,6 @@ function startRun(mode){
   }
   G.passive=false;G.listenUntil=0;G.lastInput=performance.now();G.beatStep=0;G.energy=0;G.activityLvl=1;G.lastBombT=0;
   G.multShown=1;G.multPop=0;G.multRed=0;G.lastBeatT=0;
-  G.hitStopUntil=0;G.hitStopDebt=0;G.hitStopPainted=false;
   if(mode!=='tab')G.liveOffset=0;
   G.liveErrors.length=0;G.liveCalibrated=false;
   G.beatIdx=0;G.lightIdx=0;
@@ -1319,7 +1312,6 @@ function stopGame(showRes,completed=false){
   if(!G.running)return;
   const levelComplete=showRes&&completed&&G.mode==='level'&&G.levelMaxScore;
   G.running=false;G.paused=false;pauseOverlay.hidden=true;pauseBtn.textContent='Ⅱ Pause';
-  G.hitStopUntil=0;G.hitStopDebt=0;G.hitStopPainted=false;
   if(AC?.state==='suspended')AC.resume();
   try{G.srcNode&&G.srcNode.stop&&G.srcNode.stop(0);}catch(e){}
   G.srcNode=null;
@@ -2093,12 +2085,64 @@ function buildCyberpunkChart(diff='hard'){
     {introBars:8,mediumFullRanges:[[14,19],[44,67],[75,79]]});
 }
 
+// ---------- уровень «So What If I'm A Freak» (Snow Strippers, 132.638 BPM) ----------
+// Сетка и секции сняты офлайн. Вступление остаётся разреженным, а сложность
+// нарастает частотой одиночных целей в трёх актах, без обычных одновременных пачек.
+const LEVEL_SNOW={id:TRACK_SNOW_ID,title:"Snow Strippers — So What If I'm A Freak",dur:146.912653,
+  iv:.452358,off:1.3543,silenceAt:144.2994,minEndSilence:2,
+  activeRanges:[[15,29],[31,46],[57,67]],buildBars:[14,24,30,39,56]};
+const SNOW_ANCHORS=new Set([
+  '14:3.5','17:0','17:2.5','25:0','25:2.5','29:3.5','30:3.5','31:0',
+  '35:2.5','39:3.5','40:0','40:2.5','46:3.5','48:0','48:2','56:3.5',
+  '57:0','57:2.5','61:1.5','65:2.5','67:3.5','72:3','77:2'
+]);
+function buildSnowChart(diff='hard'){
+  const T=(bar,q)=>LEVEL_SNOW.off+(bar*4+q)*LEVEL_SNOW.iv,notes=[],light=[];
+  const orb=(bar,q,side,lvl=3)=>notes.push({t:T(bar,q),orbs:1,bomb:false,lvl,side,bar,q});
+  const bomb=(bar,q)=>notes.push({t:T(bar,q),orbs:0,bomb:true,lvl:3,bar,q});
+  const alt=(bar,q)=>(bar+Math.floor(q))%2;
+  const bombAt=new Set(['18:1','21:3','26:1','28:3','33:1','35:3','38:1','42:3','45:1','48:2','58:1','60:3','63:1','66:3']);
+  const hit=(b,q,lvl=3)=>bombAt.has(`${b}:${q}`)?bomb(b,q):orb(b,q,alt(b,q),lvl);
+
+  for(let b=0;b<=7;b++){orb(b,0,alt(b,0),1);orb(b,2,alt(b,2),1);}
+  for(let b=8;b<=13;b++){orb(b,0,alt(b,0),1);orb(b,2,alt(b,2),1);if(b%2)orb(b,3,undefined,1);}
+  for(const q of[0,1,2,3,3.5])orb(14,q,alt(14,q),2);
+  for(let b=15;b<=29;b++){
+    for(let q=0;q<4;q++)hit(b,q);
+    if(b%2===1)orb(b,2.5,undefined);if(b===17||b===25||b===29)orb(b,3.5,undefined);
+  }
+  for(const q of[0,2,3.5])orb(30,q,alt(30,q),2);
+  for(let b=31;b<=46;b++){
+    for(let q=0;q<4;q++)hit(b,q);
+    orb(b,b%2?1.5:2.5,undefined);if(b===39||b===46)orb(b,3.5,undefined);
+  }
+  for(let b=47;b<=55;b++){orb(b,0,alt(b,0),1);hit(b,2,1);if(b===48)orb(b,3,undefined,2);}
+  for(const q of[0,1,2,3,3.5])orb(56,q,alt(56,q),2);
+  for(let b=57;b<=67;b++){
+    for(let q=0;q<4;q++)hit(b,q);
+    orb(b,b%2?2.5:1.5,undefined);if(b===57||b===67)orb(b,3.5,undefined);
+  }
+  for(let b=68;b<=77;b++){orb(b,0,alt(b,0),1);orb(b,2,alt(b,2),1);if(b===72||b===76)orb(b,3,undefined,1);}
+  orb(78,0,0,1);
+
+  for(let b=0;b<=78;b++)for(let q=0;q<4;q++){
+    const active=LEVEL_SNOW.activeRanges.some(([a,z])=>b>=a&&b<=z),build=LEVEL_SNOW.buildBars.includes(b);
+    light.push({t:T(b,q),k:active?(q===0?1.62:.91):(build?(q===0?1.22:.72):.46)});
+  }
+  const mediumBombs=new Set(['18:1','21:3','26:1','33:1','38:1','42:3','48:2','58:1','60:3','63:1','66:3']);
+  const lightBombs=new Set(['21:3','26:1','38:1','48:2','60:3','66:3']);
+  return finishStoryChart(notes,light,diff,SNOW_ANCHORS,LEVEL_SNOW.activeRanges,LEVEL_SNOW.buildBars,
+    mediumBombs,lightBombs,new Map([['17:0',3],['40:0',4],['57:0',4]]),
+    {introBars:8,mediumFullRanges:[[31,46],[57,67]]});
+}
+
 const bLevel=document.getElementById('bLevel'),levelAudio=document.getElementById('levelAudio'),
   bLevelYala=document.getElementById('bLevelYala'),levelAudioYala=document.getElementById('levelAudioYala'),
   bLevelMoon=document.getElementById('bLevelMoon'),levelAudioMoon=document.getElementById('levelAudioMoon'),
   bLevelAdieu=document.getElementById('bLevelAdieu'),levelAudioAdieu=document.getElementById('levelAudioAdieu'),
   bLevelStay=document.getElementById('bLevelStay'),levelAudioStay=document.getElementById('levelAudioStay'),
   bLevelCyberpunk=document.getElementById('bLevelCyberpunk'),levelAudioCyberpunk=document.getElementById('levelAudioCyberpunk'),
+  bLevelSnow=document.getElementById('bLevelSnow'),levelAudioSnow=document.getElementById('levelAudioSnow'),
   bStart=document.getElementById('bStart');
 const LEVEL_CHOICES=[
   {config:LEVEL_MISTAKE,buildChart:buildMistakeChart,audio:levelAudio,button:bLevel,label:'MISTAKE'},
@@ -2106,7 +2150,8 @@ const LEVEL_CHOICES=[
   {config:LEVEL_MOON,buildChart:buildMoonChart,audio:levelAudioMoon,button:bLevelMoon,label:'MOON'},
   {config:LEVEL_ADIEU,buildChart:buildAdieuChart,audio:levelAudioAdieu,button:bLevelAdieu,label:'ADIEU'},
   {config:LEVEL_STAY,buildChart:buildStayChart,audio:levelAudioStay,button:bLevelStay,label:'STAY'},
-  {config:LEVEL_CYBERPUNK,buildChart:buildCyberpunkChart,audio:levelAudioCyberpunk,button:bLevelCyberpunk,label:'CYBERPUNK'}
+  {config:LEVEL_CYBERPUNK,buildChart:buildCyberpunkChart,audio:levelAudioCyberpunk,button:bLevelCyberpunk,label:'CYBERPUNK'},
+  {config:LEVEL_SNOW,buildChart:buildSnowChart,audio:levelAudioSnow,button:bLevelSnow,label:'FREAK'}
 ];
 const levelAudioReady=new WeakMap();
 let selectedLevel=null,selectionToken=0;
@@ -2186,6 +2231,7 @@ bLevelMoon.onclick=()=>selectLevel(LEVEL_CHOICES[2]);
 bLevelAdieu.onclick=()=>selectLevel(LEVEL_CHOICES[3]);
 bLevelStay.onclick=()=>selectLevel(LEVEL_CHOICES[4]);
 bLevelCyberpunk.onclick=()=>selectLevel(LEVEL_CHOICES[5]);
+bLevelSnow.onclick=()=>selectLevel(LEVEL_CHOICES[6]);
 bStart.onclick=()=>{if(selectedLevel)startBundledLevel(selectedLevel.config,selectedLevel.buildChart,selectedLevel.audio);};
 renderLevelRecords();
 </script>
