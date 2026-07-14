@@ -124,15 +124,24 @@ if(/\/mobile\/[^/]+\.html$/i.test(location.pathname)){
     if(src&&!src.includes('/')&&!src.startsWith('data:'))audio.setAttribute('src','../'+src);
   }
 }
-const cv=document.getElementById('c'),cx=cv.getContext('2d');
-let W=0,H=0;
-const MOBILE_DPR=Math.min(1.6,window.devicePixelRatio||1),MOBILE_TOUCH=matchMedia('(pointer:coarse)').matches;
-const MOBILE_EQ_BARS=36,MOBILE_PARTICLES=10;
+const cv=document.getElementById('c'),cx=cv.getContext('2d',{alpha:false,desynchronized:true});
+let W=0,H=0,RENDER_DPR=1;
+const MOBILE_TOUCH=matchMedia('(pointer:coarse)').matches;
+const MOBILE_EQ_BARS=36,MOBILE_PARTICLES=10,GAMEPLAY_MAX_WIDTH=800;
+// Retina/4K не должны заставлять Canvas красить десятки миллионов пикселей 60 раз/с.
+// CSS-размер остаётся полноэкранным, а backing store ограничен безопасным бюджетом.
+const MAX_BACKING_PIXELS=3200000;
+function gameplayZone(){
+  const width=Math.min(GAMEPLAY_MAX_WIDTH,W);
+  return{left:(W-width)/2,width,right:(W+width)/2};
+}
 function resize(){
   const oldW=W||innerWidth,oldH=H||innerHeight,nw=Math.max(280,innerWidth),nh=Math.max(320,innerHeight);
   const sx=nw/oldW,sy=nh/oldH;W=nw;H=nh;
-  cv.width=Math.round(W*MOBILE_DPR);cv.height=Math.round(H*MOBILE_DPR);
-  cv.style.width=W+'px';cv.style.height=H+'px';cx.setTransform(MOBILE_DPR,0,0,MOBILE_DPR,0,0);
+  const maxDpr=MOBILE_TOUCH?1.6:1.35;
+  RENDER_DPR=Math.min(maxDpr,window.devicePixelRatio||1,Math.sqrt(MAX_BACKING_PIXELS/(W*H)));
+  cv.width=Math.max(1,Math.round(W*RENDER_DPR));cv.height=Math.max(1,Math.round(H*RENDER_DPR));
+  cv.style.width=W+'px';cv.style.height=H+'px';cx.setTransform(RENDER_DPR,0,0,RENDER_DPR,0,0);
   const state=window.G;if(!state||sx===1&&sy===1)return;
   for(const o of state.orbs){o.x*=sx;o.y*=sy;o.x0*=sx;o.y0*=sy;o.vx*=sx;o.vy*=sy;o.vy0*=sy;o.g*=sy;}
   for(const a of [state.halves,state.parts,state.texts])for(const p of a){if(Number.isFinite(p.x))p.x*=sx;if(Number.isFinite(p.y))p.y*=sy;}
@@ -402,6 +411,10 @@ function updateAudio(now){
   const nB=Math.max(3,Math.round(180/binHz));
   let sb=0;for(let i=1;i<=nB;i++)sb+=freq[i];
   G.bass=sb/nB/255;
+  // Для файлов и ручных уровней карта уже известна заранее. Whitening, flux,
+  // автокорреляция и PLL нужны только захвату вкладки; раньше они зря работали
+  // каждый кадр и создавали CPU-пики параллельно с Canvas.
+  if(G.mode!=='tab'||!G.running){G.bassAvg=G.bass;return;}
   const nBins=Math.min(freq.length,Math.round(4000/binHz));
   const rt=G.rt;
   if(!rt.white){rt.white=new Float32Array(freq.length).fill(.02);rt.prevW=new Float32Array(freq.length);}
@@ -604,9 +617,10 @@ function spawnOrb(hitT,travel,type,side,aim=null){
   const d=DIFF[G.diff];
   // физика — по фактическому времени до удара (после лага кадра шар всё равно прилетит вовремя)
   const spawnT=AC.currentTime,tr=Math.max(.42,hitT-spawnT);
-  const fr=side===0?[.08,.45]:side===1?[.55,.92]:[.08,.92];
-  const x0=aim?W*aim.x0:W*(fr[0]+Math.random()*(fr[1]-fr[0]));
-  const xt=aim?W*aim.xt:Math.min(W*.94,Math.max(W*.06,x0+(Math.random()*2-1)*W*.22));
+  const zone=gameplayZone(),fr=side===0?[.08,.45]:side===1?[.55,.92]:[.08,.92];
+  const zx=u=>zone.left+zone.width*u;
+  const x0=aim?zx(aim.x0):zx(fr[0]+Math.random()*(fr[1]-fr[0]));
+  const xt=aim?zx(aim.xt):Math.min(zx(.94),Math.max(zx(.06),x0+(Math.random()*2-1)*zone.width*.22));
   const y0=H+60,yt=aim?H*aim.yt:H*(.22+Math.random()*.34);
   // гравитация подбирается так, чтобы вершина дуги была ровно в yt в момент удара:
   // шар зависает в верхней точке под схлопывание кольца и не улетает за экран
@@ -912,7 +926,7 @@ function draw(now){
   cx.setTransform(1,0,0,1,0,0);
   cx.fillStyle='#07070c';cx.fillRect(0,0,cv.width,cv.height);
   const shakeX=G.shake>.5?(Math.random()-.5)*G.shake:0,shakeY=G.shake>.5?(Math.random()-.5)*G.shake:0;
-  cx.setTransform(MOBILE_DPR,0,0,MOBILE_DPR,shakeX*MOBILE_DPR,shakeY*MOBILE_DPR);
+  cx.setTransform(RENDER_DPR,0,0,RENDER_DPR,shakeX*RENDER_DPR,shakeY*RENDER_DPR);
   // фон подогревает драйв: гейтится множителем (×1 — погашен, ×2 — мерцает под бит, ×3+ — ярче)
   const mult=multOf(G.combo);
   const mg=G.running?Math.min(1,(mult-1)*.45):1;
@@ -1021,7 +1035,9 @@ function draw(now){
 // вместо посегментных штрихов — нет «бусин» от round cap.
 const TRAIL_MS=200;
 function drawTrail(tn){
-  G.trail=G.trail.filter(p=>tn-p.t<TRAIL_MS);
+  let expired=0;while(expired<G.trail.length&&tn-G.trail[expired].t>=TRAIL_MS)expired++;
+  if(expired)G.trail.splice(0,expired); // без нового массива каждый кадр — меньше GC-пауз
+  if(G.trail.length>64)G.trail.splice(0,G.trail.length-64);
   if(G.trail.length<3)return;
   const cg=Math.min(1,G.combo/25); // рост свечения до комбо ×25
   // 1) выкидываем точки ближе 5px — дрожь руки не ломает ленту
@@ -1173,9 +1189,14 @@ function drawBomb(o,now){
   cx.restore();
 }
 
-let lastTs=0;
+let lastTs=0,frameClock=0;
 function loop(ts){
   requestAnimationFrame(loop);
+  // На ProMotion/144 Hz физика всё равно привязана к аудиочасам. Ограничение 60 FPS
+  // почти вдвое снижает GPU-нагрузку; меню и пауза спокойно работают на 30 FPS.
+  const frameBudget=G.running&&!G.paused?1000/60:1000/30;
+  const elapsed=ts-frameClock;if(frameClock&&elapsed<frameBudget)return;
+  frameClock=ts-(elapsed%frameBudget);
   const frameDt=(ts-lastTs)/1000||.016;lastTs=ts;
   const now=AC?AC.currentTime:0;
   if(AC&&!G.paused)updateAudio(now);
@@ -2164,17 +2185,30 @@ function waitForAudioMetadata(audio){
     audio.addEventListener('loadedmetadata',done,{once:true});audio.addEventListener('error',fail,{once:true});
   });
 }
-function prepareLevelAudio(audio){
+async function fetchLevelBlob(src,onProgress){
+  const response=await fetch(src,{cache:'force-cache'});
+  if(!response.ok)throw new Error(`track download failed (${response.status})`);
+  const total=Number(response.headers.get('content-length'))||0,type=response.headers.get('content-type')||'audio/mpeg';
+  if(!response.body?.getReader){const blob=await response.blob();onProgress?.(1);return blob;}
+  const reader=response.body.getReader(),chunks=[];let loaded=0;
+  for(;;){
+    const {done,value}=await reader.read();if(done)break;
+    chunks.push(value);loaded+=value.byteLength;if(total)onProgress?.(Math.min(.99,loaded/total));
+  }
+  onProgress?.(1);return new Blob(chunks,{type});
+}
+function prepareLevelAudio(audio,onProgress){
   let ready=levelAudioReady.get(audio);if(ready)return ready;
   ready=(async()=>{
     const rawSrc=audio.getAttribute('src')||'';
-    // Большой data URI ненадёжен как media source на iOS. При выборе трека один раз
-    // превращаем его в Blob URL; отдельный START затем вызывает play() прямым жестом.
-    if(rawSrc.startsWith('data:')){
-      const response=await fetch(rawSrc);if(!response.ok)throw new Error('embedded audio cannot be read');
-      const blob=await response.blob();audio.src=URL.createObjectURL(blob);
+    // На HTTP(S) выбранный уровень скачивается целиком до START. Это исключает
+    // сетевые buffer underrun во время игры. Остальные MP3 не грузятся параллельно.
+    // Большой data URI standalone-сборки также один раз превращается в Blob URL.
+    if(rawSrc.startsWith('data:')||location.protocol==='http:'||location.protocol==='https:'){
+      const blob=await fetchLevelBlob(rawSrc,onProgress);
+      audio.src=URL.createObjectURL(blob);audio.dataset.fullPreload='1';
     }
-    const metadata=waitForAudioMetadata(audio);audio.load();await metadata;return true;
+    audio.preload='auto';const metadata=waitForAudioMetadata(audio);audio.load();await metadata;return true;
   })();
   levelAudioReady.set(audio,ready);return ready;
 }
@@ -2186,7 +2220,12 @@ async function selectLevel(choice){
   selectedLevel=choice;const token=++selectionToken;
   for(const item of LEVEL_CHOICES)item.button.classList.toggle('trackSelected',item===choice);
   bStart.disabled=true;bStart.textContent=`PREPARING ${choice.label}…`;
-  try{await prepareLevelAudio(choice.audio);if(token===selectionToken)refreshStartButton();}
+  try{
+    await prepareLevelAudio(choice.audio,p=>{
+      if(token===selectionToken)bStart.textContent=`PRELOADING ${choice.label} · ${Math.round(p*100)}%`;
+    });
+    if(token===selectionToken)refreshStartButton();
+  }
   catch(err){if(token===selectionToken){bStart.disabled=true;bStart.textContent='AUDIO ERROR';alert('Failed to prepare bundled track: '+err.message);}}
 }
 async function startBundledLevel(config,buildChart,audio){
